@@ -10,6 +10,7 @@ import struct
 import wave
 import xml.etree.ElementTree as ET
 from wavinfo import WavInfoReader
+from functools import lru_cache
 
 
 class WavMetadata:
@@ -36,7 +37,9 @@ class WavMetadata:
             "Take": "",
             "Category": "",
             "Subcategory": "",
+            "Slate": "",
             "ixmlNote": "",
+            "ixmlWildtrack": "",
             "ixmlCircled": "",
             "File Path": self.wav_path
         }
@@ -49,19 +52,10 @@ class WavMetadata:
             # Dump all available chunks using a low-level approach
             self._dump_all_wav_chunks(metadata)
         except Exception as e:
-            print(f"Error in direct chunk reading: {e}")
+            self._debug_print(f"Error in direct chunk reading: {e}")
         
         # Try the regular wavinfo approach as a fallback
         try:
-            # Print raw object properties to debug
-            for attr in dir(self.wav_info):
-                if not attr.startswith('__'):
-                    try:
-                        value = getattr(self.wav_info, attr)
-                        print(f"  Found {attr}: {type(value)}")
-                    except Exception as e:
-                        pass
-                    
             # BEXT chunk field name variations to check
             bext_field_map = {
                 "Show": ["show", "Show", "SHOW", "program", "Program", "PROGRAM", "series", "Series", "SERIES"],
@@ -70,46 +64,46 @@ class WavMetadata:
             }
             
             # Safely extract BWAV metadata if available
-            try:
-                if hasattr(self.wav_info, 'bext'):
-                    bext = self.wav_info.bext
-                    print(f"  Found BEXT chunk with attributes: {[a for a in dir(bext) if not a.startswith('__')]}")
-                    
-                    # Check all possible field name variations
-                    for metadata_key, field_variations in bext_field_map.items():
-                        for field_name in field_variations:
-                            try:
-                                if hasattr(bext, field_name) and getattr(bext, field_name):
-                                    value = str(getattr(bext, field_name)).strip()
-                                    if value:
-                                        metadata[metadata_key] = value
-                                        print(f"  Found {metadata_key} from BEXT field '{field_name}': {value}")
-                                        break  # Found the value, no need to check other variations
-                            except:
-                                continue
-                                
-                    # Special handling for broadcast wave fields
-                    try:
-                        # Check BEXT description field which sometimes contains scene/take info
-                        if hasattr(bext, 'description') and bext.description:
-                            desc = str(bext.description).strip()
-                            print(f"  Found description: {desc}")
-                            # Check if description contains scene/take info (e.g., "S01T02" format)
-                            import re
-                            # Look for scene/take patterns like "S01T02" or "SC01TK02"
-                            scene_take_match = re.search(r'S(?:C|CNE)?[_\s]*(\d+)[_\s]*T(?:K|AKE)?[_\s]*(\d+)', desc, re.IGNORECASE)
-                            if scene_take_match:
-                                if not metadata["Scene"]:
-                                    metadata["Scene"] = scene_take_match.group(1)
-                                    print(f"  Extracted Scene from description: {metadata['Scene']}")
-                                if not metadata["Take"]:
-                                    metadata["Take"] = scene_take_match.group(2)
-                                    print(f"  Extracted Take from description: {metadata['Take']}")
-                    except:
-                        pass
-            except Exception as e:
-                print(f"Warning: Could not read BEXT chunk in {self.wav_path}: {e}")
+            if hasattr(self.wav_info, 'bext'):
+                bext = self.wav_info.bext
+                self._debug_print(f"  Found BEXT chunk with attributes: {[a for a in dir(bext) if not a.startswith('__')]}")
                 
+                # Check all possible field name variations
+                for metadata_key, field_variations in bext_field_map.items():
+                    if metadata[metadata_key]:  # Skip if value already found
+                        continue
+                        
+                    for field_name in field_variations:
+                        try:
+                            if hasattr(bext, field_name) and getattr(bext, field_name):
+                                value = str(getattr(bext, field_name)).strip()
+                                if value:
+                                    metadata[metadata_key] = value
+                                    self._debug_print(f"  Found {metadata_key} from BEXT field '{field_name}': {value}")
+                                    break  # Found the value, no need to check other variations
+                        except Exception:
+                            continue
+                            
+                # Special handling for broadcast wave fields
+                try:
+                    # Check BEXT description field which sometimes contains scene/take info
+                    if hasattr(bext, 'description') and bext.description:
+                        desc = str(bext.description).strip()
+                        self._debug_print(f"  Found description: {desc}")
+                        # Check if description contains scene/take info (e.g., "S01T02" format)
+                        import re
+                        # Look for scene/take patterns like "S01T02" or "SC01TK02"
+                        scene_take_match = re.search(r'S(?:C|CNE)?[_\s]*(\d+)[_\s]*T(?:K|AKE)?[_\s]*(\d+)', desc, re.IGNORECASE)
+                        if scene_take_match:
+                            if not metadata["Scene"]:
+                                metadata["Scene"] = scene_take_match.group(1)
+                                self._debug_print(f"  Extracted Scene from description: {metadata['Scene']}")
+                            if not metadata["Take"]:
+                                metadata["Take"] = scene_take_match.group(2)
+                                self._debug_print(f"  Extracted Take from description: {metadata['Take']}")
+                except Exception:
+                    pass
+                    
             # iXML field name variations to check
             ixml_field_map = {
                 "Category": ["CATEGORY", "Category", "category", "TYPE", "Type", "type", "KIND", "Kind", "kind"],
@@ -119,108 +113,109 @@ class WavMetadata:
             }
             
             # Safely extract iXML metadata with multiple fallback methods
-            try:
-                if hasattr(self.wav_info, 'ixml'):
-                    ixml = self.wav_info.ixml
-                    print(f"  Found iXML chunk of type: {type(ixml)}")
-                    
-                    # Method 1: Try to use WavIXMLFormat.to_dict if available
-                    if ixml and hasattr(ixml, 'to_dict'):
-                        try:
-                            # Let's use a direct approach to avoid the error
-                            try:
-                                # Check all possible field variations with direct attribute access
-                                for metadata_key, field_variations in ixml_field_map.items():
-                                    for field_name in field_variations:
-                                        try:
-                                            if hasattr(ixml, field_name) and getattr(ixml, field_name):
-                                                value = str(getattr(ixml, field_name)).strip()
-                                                if value:
-                                                    metadata[metadata_key] = value
-                                                    print(f"  Found {metadata_key} from direct iXML field '{field_name}': {value}")
-                                                    break  # Found the value, no need to check other variations
-                                        except:
-                                            continue
-                            except Exception:
-                                # If direct access fails, try the to_dict method but with extra safety
-                                pass
+            if hasattr(self.wav_info, 'ixml'):
+                ixml = self.wav_info.ixml
+                self._debug_print(f"  Found iXML chunk of type: {type(ixml)}")
+                
+                # Method 1: Try to use WavIXMLFormat.to_dict if available
+                if ixml and hasattr(ixml, 'to_dict'):
+                    try:
+                        # Check all possible field variations with direct attribute access
+                        for metadata_key, field_variations in ixml_field_map.items():
+                            if metadata[metadata_key]:  # Skip if value already found
+                                continue
                                 
-                            # Carefully call to_dict, but don't process the result if it's None
-                            ixml_dict = ixml.to_dict()
-                            
-                            # Extremely cautious check to avoid None issues
-                            if ixml_dict is not None and hasattr(ixml_dict, '__contains__'):
-                                print(f"  iXML dict keys: {list(ixml_dict.keys()) if hasattr(ixml_dict, 'keys') else 'no keys method'}")
-                                
-                                # Check all possible field name variations
-                                for metadata_key, field_variations in ixml_field_map.items():
-                                    for field_name in field_variations:
-                                        try:
-                                            if field_name in ixml_dict and ixml_dict[field_name]:
-                                                value = str(ixml_dict[field_name]).strip()
-                                                if value:
-                                                    metadata[metadata_key] = value
-                                                    print(f"  Found {metadata_key} from iXML dict key '{field_name}': {value}")
-                                                    break  # Found the value, no need to check other variations
-                                        except:
-                                            continue
-                        except Exception as e:
-                            # This is a more specific check for the exact error we're seeing
-                            if "'NoneType' object has no attribute 'iter'" in str(e):
-                                # Just log it and continue - this is a known issue with the library
-                                print(f"Note: iXML dictionary access skipped due to None value in {self.wav_path}")
-                            else:
-                                print(f"Warning: Error accessing iXML dictionary in {self.wav_path}: {e}")
-                    
-                    # Method 2: Try parsing as XML if method 1 failed or to_dict isn't available
-                    elif ixml:
-                        try:
-                            # Handle string vs bytes
-                            xml_data = ixml
-                            if isinstance(xml_data, str):
-                                xml_data = xml_data.encode('utf-8')
-                            
-                            # Only try to parse if it looks like XML
-                            if isinstance(xml_data, bytes) and b'<' in xml_data:
+                            for field_name in field_variations:
                                 try:
-                                    root = ET.fromstring(xml_data)
+                                    if hasattr(ixml, field_name) and getattr(ixml, field_name):
+                                        value = str(getattr(ixml, field_name)).strip()
+                                        if value:
+                                            metadata[metadata_key] = value
+                                            self._debug_print(f"  Found {metadata_key} from direct iXML field '{field_name}': {value}")
+                                            break  # Found the value, no need to check other variations
+                                except Exception:
+                                    continue
                                     
-                                    # Function to safely find text in XML
-                                    def safe_find_text(root, path):
-                                        try:
-                                            elem = root.find(path)
-                                            if elem is not None and elem.text:
-                                                return elem.text.strip()
-                                        except:
-                                            pass
-                                        return ""
+                        # Carefully call to_dict, but don't process the result if it's None
+                        ixml_dict = ixml.to_dict()
+                        
+                        # Extremely cautious check to avoid None issues
+                        if ixml_dict is not None and hasattr(ixml_dict, '__contains__'):
+                            self._debug_print(f"  iXML dict keys: {list(ixml_dict.keys()) if hasattr(ixml_dict, 'keys') else 'no keys method'}")
+                            
+                            # Check all possible field name variations
+                            for metadata_key, field_variations in ixml_field_map.items():
+                                if metadata[metadata_key]:  # Skip if value already found
+                                    continue
                                     
-                                    # Try to get category/subcategory
+                                for field_name in field_variations:
+                                    try:
+                                        if field_name in ixml_dict and ixml_dict[field_name]:
+                                            value = str(ixml_dict[field_name]).strip()
+                                            if value:
+                                                metadata[metadata_key] = value
+                                                self._debug_print(f"  Found {metadata_key} from iXML dict key '{field_name}': {value}")
+                                                break  # Found the value, no need to check other variations
+                                    except Exception:
+                                        continue
+                    except Exception as e:
+                        # This is a more specific check for the exact error we're seeing
+                        if "'NoneType' object has no attribute 'iter'" in str(e):
+                            # Just log it and continue - this is a known issue with the library
+                            self._debug_print(f"Note: iXML dictionary access skipped due to None value in {self.wav_path}")
+                        else:
+                            self._debug_print(f"Warning: Error accessing iXML dictionary in {self.wav_path}: {e}")
+                
+                # Method 2: Try parsing as XML if method 1 failed or to_dict isn't available
+                elif ixml:
+                    try:
+                        # Handle string vs bytes
+                        xml_data = ixml
+                        if isinstance(xml_data, str):
+                            xml_data = xml_data.encode('utf-8')
+                        
+                        # Only try to parse if it looks like XML
+                        if isinstance(xml_data, bytes) and b'<' in xml_data:
+                            try:
+                                root = ET.fromstring(xml_data)
+                                
+                                # Function to safely find text in XML
+                                def safe_find_text(root, path):
+                                    try:
+                                        elem = root.find(path)
+                                        if elem is not None and elem.text:
+                                            return elem.text.strip()
+                                    except Exception:
+                                        pass
+                                    return ""
+                                
+                                # Try to get category/subcategory only if not already found
+                                if not metadata["Category"]:
                                     category = safe_find_text(root, ".//CATEGORY")
                                     if category:
                                         metadata["Category"] = category
-                                    
+                                
+                                if not metadata["Subcategory"]:
                                     subcategory = safe_find_text(root, ".//SUBCATEGORY")
                                     if subcategory:
                                         metadata["Subcategory"] = subcategory
-                                    
-                                    # Try to get note/circled
+                                
+                                # Try to get note/circled only if not already found
+                                if not metadata["ixmlNote"]:
                                     note = safe_find_text(root, ".//NOTE")
                                     if note:
                                         metadata["ixmlNote"] = note
-                                    
+                                
+                                if not metadata["ixmlCircled"]:
                                     circled = safe_find_text(root, ".//CIRCLED")
                                     if circled:
                                         metadata["ixmlCircled"] = circled
-                                except Exception as e:
-                                    print(f"Warning: Error parsing iXML data in {self.wav_path}: {e}")
-                        except Exception as e:
-                            print(f"Warning: Error processing iXML data in {self.wav_path}: {e}")
-                            
-            except Exception as e:
-                print(f"Warning: Could not read iXML chunk in {self.wav_path}: {e}")
+                            except Exception as e:
+                                self._debug_print(f"Warning: Error parsing iXML data in {self.wav_path}: {e}")
+                    except Exception as e:
+                        self._debug_print(f"Warning: Error processing iXML data in {self.wav_path}: {e}")
         except Exception as e:
-            print(f"Warning: Error in standard metadata extraction: {e}")
+            self._debug_print(f"Warning: Error in standard metadata extraction: {e}")
         
         return metadata
     
@@ -571,10 +566,44 @@ class WavMetadata:
         return ET.tostring(ixml_root, encoding="utf-8")
 
 
+@lru_cache(maxsize=128)
 def read_wav_metadata(file_path, debug=False):
-    """Read metadata from a WAV file."""
-    metadata_handler = WavMetadata(file_path, debug=debug)
-    return metadata_handler.read_metadata()
+    """Read metadata from a WAV file using the WavMetadata class."""
+    try:
+        # Check if file exists
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File not found: {file_path}")
+            
+        # Check if file is readable
+        if not os.access(file_path, os.R_OK):
+            raise PermissionError(f"Cannot read file: {file_path}")
+            
+        # Check file size to avoid reading empty files
+        if os.path.getsize(file_path) < 44:  # Minimum WAV header size
+            raise ValueError(f"File too small to be a valid WAV file: {file_path}")
+            
+        # Create metadata reader and get metadata
+        metadata_reader = WavMetadata(file_path, debug)
+        return metadata_reader.read_metadata()
+    except Exception as e:
+        if debug:
+            import traceback
+            traceback.print_exc()
+        # Return an empty metadata dictionary with error information
+        return {
+            "Filename": os.path.basename(file_path),
+            "Show": "",
+            "Scene": "",
+            "Take": "",
+            "Category": "",
+            "Subcategory": "",
+            "Slate": "",
+            "ixmlNote": "",
+            "ixmlWildtrack": "",
+            "ixmlCircled": "",
+            "File Path": file_path,
+            "Error": str(e)
+        }
 
 
 def write_wav_metadata(file_path, metadata):

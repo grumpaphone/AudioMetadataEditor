@@ -1,0 +1,17 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Project Overview
+
+This project appears to be a Python application focused on handling WAV file metadata.
+
+## Key Files
+
+*   **Main Application:** The primary application logic seems to reside in [app.py](mdc:app.py). There might be an alternative entry point or runner script in [run.py](mdc:run.py).
+*   **Metadata Handling:** The core logic for reading and potentially writing WAV metadata is likely implemented in [wav_metadata.py](mdc:wav_metadata.py).
+*   **Testing:** Unit tests for the metadata functionality are probably located in [test_metadata.py](mdc:test_metadata.py).
+*   **Dependencies:** Project dependencies are listed in [requirements.txt](mdc:requirements.txt).
+*   **Utilities:** [diagnose.py](mdc:diagnose.py) and [fix_syntax.py](mdc:fix_syntax.py) appear to be utility scripts for diagnosis or code fixing.
+*   **Example Data:** [PR2_Allen_Sc5.14D_01.wav](mdc:PR2_Allen_Sc5.14D_01.wav) is an example WAV file used within the project.

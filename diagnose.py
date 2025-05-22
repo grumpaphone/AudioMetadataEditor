@@ -1,222 +1,218 @@
 #!/usr/bin/env python3
 """
-Diagnostic tool for WAV metadata reading
+Diagnostic Tool for WAV Metadata
+
+This script analyzes WAV files and provides diagnostics about metadata structure and content.
 """
+
 import os
 import sys
+import glob
+import argparse
+import time
+import json
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
+import multiprocessing
 import traceback
 from wavinfo import WavInfoReader
-import xml.etree.ElementTree as ET
 
 
-def analyze_wav_file(file_path):
-    """Analyze a WAV file and print detailed info about its metadata structure"""
-    print(f"\n{'='*80}\nAnalyzing WAV file: {file_path}\n{'='*80}")
-    
+def analyze_wav_file(wav_path, debug=False):
+    """Analyze a single WAV file and return its structure."""
     try:
-        # Basic file info
-        print(f"File size: {os.path.getsize(file_path)} bytes")
-        print(f"File exists: {os.path.exists(file_path)}")
+        start_time = time.time()
+        result = {
+            "file_path": wav_path,
+            "file_size": os.path.getsize(wav_path),
+            "chunks": {},
+            "errors": [],
+            "metadata": {},
+            "analysis_time_ms": 0
+        }
         
-        # Try to load with wavinfo
-        print("\nAttempting to load with WavInfoReader...")
-        wav_info = WavInfoReader(file_path)
-        
-        # Print ALL available attributes and their raw values
-        print("\nRAW WavInfoReader contents:")
-        for attr in dir(wav_info):
-            if not attr.startswith('__'):
-                try:
-                    value = getattr(wav_info, attr)
-                    print(f"  - {attr}: {repr(value)} (type: {type(value)})")
-                except Exception as e:
-                    print(f"  - {attr}: ERROR accessing - {e}")
-        
-        # Check for BWF/BEXT chunk
-        print("\nBWF/BEXT chunk information:")
-        if hasattr(wav_info, 'bext'):
-            print("  BEXT chunk found")
-            bext = wav_info.bext
-            print("  BEXT attributes:")
-            for attr in dir(bext):
-                if not attr.startswith('__'):
-                    try:
-                        value = getattr(bext, attr)
-                        print(f"    - {attr}: {value}")
-                    except Exception as e:
-                        print(f"    - {attr}: ERROR accessing - {e}")
-        else:
-            print("  No BEXT chunk found")
-        
-        # Check for iXML chunk
-        print("\niXML chunk information:")
-        if hasattr(wav_info, 'ixml'):
-            print("  iXML chunk found")
-            ixml = wav_info.ixml
-            print(f"  iXML type: {type(ixml)}")
+        # Read the WAV file using wavinfo
+        try:
+            wav_info = WavInfoReader(wav_path)
             
-            try:
-                if hasattr(ixml, 'to_dict'):
-                    print("  iXML has to_dict method")
-                    ixml_dict = ixml.to_dict()
-                    print(f"  iXML dict type: {type(ixml_dict)}")
-                    if ixml_dict and isinstance(ixml_dict, dict):
-                        print("  iXML dict keys:")
-                        for key, value in ixml_dict.items():
-                            print(f"    - {key}: {value}")
-                    else:
-                        print(f"  iXML dict is invalid: {ixml_dict}")
-                else:
-                    print("  iXML does NOT have to_dict method")
-                    if isinstance(ixml, str):
-                        print(f"  iXML is a string, length: {len(ixml)}")
-                    elif isinstance(ixml, bytes):
-                        print(f"  iXML is bytes, length: {len(ixml)}")
-                    else:
-                        print(f"  iXML is type: {type(ixml)}")
-            except Exception as e:
-                print(f"  Error examining iXML: {e}")
-                traceback.print_exc()
-        else:
-            print("  No iXML chunk found")
-        
-        print("\nAttempting to extract metadata...")
-        metadata = extract_metadata(wav_info, file_path)
-        print("Extracted metadata:")
-        for key, value in metadata.items():
-            print(f"  - {key}: {value}")
-        
-    except Exception as e:
-        print(f"Error analyzing file: {e}")
-        traceback.print_exc()
-
-
-def extract_metadata(wav_info, file_path):
-    """Extract metadata from WAV file (debug version)"""
-    # Initialize metadata dictionary with empty values
-    metadata = {
-        "Filename": os.path.basename(file_path),
-        "Scene": "",
-        "Take": "",
-        "Category": "",
-        "Subcategory": "",
-        "ixmlNote": "",
-        "ixmlCircled": "",
-        "File Path": file_path
-    }
-    
-    # Extract BWAV metadata if available
-    try:
-        print("Extracting BEXT metadata...")
-        if hasattr(wav_info, 'bext'):
-            # Map BWAV fields to our metadata structure
-            bext = wav_info.bext
-            if hasattr(bext, 'scene'):
-                metadata["Scene"] = bext.scene
-                print(f"  Got Scene: {bext.scene}")
-            if hasattr(bext, 'take'):
-                metadata["Take"] = bext.take
-                print(f"  Got Take: {bext.take}")
-    except Exception as e:
-        print(f"Error extracting BEXT metadata: {e}")
-    
-    # Extract iXML metadata if available
-    try:
-        print("Extracting iXML metadata...")
-        if hasattr(wav_info, 'ixml'):
-            ixml_str = wav_info.ixml
-            print(f"  iXML type: {type(ixml_str)}")
-            
-            if ixml_str:
-                # Try using to_dict if available
-                if hasattr(ixml_str, 'to_dict'):
-                    print("  Using to_dict method")
-                    try:
-                        ixml_dict = ixml_str.to_dict()
-                        print(f"  Dict result: {type(ixml_dict)}")
-                        
-                        if ixml_dict and isinstance(ixml_dict, dict):
-                            for key in ['CATEGORY', 'SUBCATEGORY', 'NOTE', 'CIRCLED']:
-                                if key in ixml_dict:
-                                    if key == 'CATEGORY':
-                                        metadata["Category"] = str(ixml_dict[key])
-                                        print(f"  Got Category: {ixml_dict[key]}")
-                                    elif key == 'SUBCATEGORY':
-                                        metadata["Subcategory"] = str(ixml_dict[key])
-                                        print(f"  Got Subcategory: {ixml_dict[key]}")
-                                    elif key == 'NOTE':
-                                        metadata["ixmlNote"] = str(ixml_dict[key])
-                                        print(f"  Got Note: {ixml_dict[key]}")
-                                    elif key == 'CIRCLED':
-                                        metadata["ixmlCircled"] = str(ixml_dict[key])
-                                        print(f"  Got Circled: {ixml_dict[key]}")
-                    except Exception as e:
-                        print(f"  Error using to_dict: {e}")
+            # Get available chunks
+            for attr_name in dir(wav_info):
+                if attr_name.startswith('__'):
+                    continue
                 
-                # Try using ElementTree if to_dict failed or isn't available
-                else:
-                    print("  Using ElementTree parsing")
+                try:
+                    attr = getattr(wav_info, attr_name)
+                    if attr_name in ('bext', 'ixml'):
+                        result["chunks"][attr_name] = {
+                            "present": attr is not None,
+                            "type": str(type(attr)),
+                            "attributes": [a for a in dir(attr) if not a.startswith('__')] if attr else []
+                        }
+                except Exception as e:
+                    result["errors"].append(f"Error reading {attr_name} chunk: {str(e)}")
+            
+            # Extract basic metadata
+            if hasattr(wav_info, 'bext') and wav_info.bext:
+                bext = wav_info.bext
+                result["metadata"]["bext"] = {}
+                for attr_name in dir(bext):
+                    if not attr_name.startswith('__'):
+                        try:
+                            attr_value = getattr(bext, attr_name)
+                            if isinstance(attr_value, (str, int, float, bool)) or attr_value is None:
+                                result["metadata"]["bext"][attr_name] = attr_value
+                        except Exception as e:
+                            result["errors"].append(f"Error reading bext.{attr_name}: {str(e)}")
+            
+            if hasattr(wav_info, 'ixml') and wav_info.ixml:
+                result["metadata"]["ixml"] = {"raw_type": str(type(wav_info.ixml))}
+                
+                # Try to extract some basic info about iXML
+                ixml = wav_info.ixml
+                if hasattr(ixml, 'to_dict') and callable(ixml.to_dict):
                     try:
-                        # If it's a string, encode it
-                        if isinstance(ixml_str, str):
-                            ixml_str = ixml_str.encode('utf-8')
-                            print("  Encoded string to bytes")
-                        
-                        if ixml_str:
-                            root = ET.fromstring(ixml_str)
-                            print(f"  Parsed XML root: {root.tag}")
-                            
-                            for path, metadata_key in [
-                                (".//CATEGORY", "Category"),
-                                (".//SUBCATEGORY", "Subcategory"),
-                                (".//NOTE", "ixmlNote"),
-                                (".//CIRCLED", "ixmlCircled")
-                            ]:
-                                element = root.find(path)
-                                if element is not None and element.text:
-                                    metadata[metadata_key] = element.text
-                                    print(f"  Got {metadata_key}: {element.text}")
+                        result["metadata"]["ixml"]["has_to_dict"] = True
+                        # Don't actually call to_dict() as it can be slow or error-prone
                     except Exception as e:
-                        print(f"  Error parsing XML: {e}")
+                        result["metadata"]["ixml"]["to_dict_error"] = str(e)
+                else:
+                    result["metadata"]["ixml"]["has_to_dict"] = False
+                
+                # Check if iXML has direct properties
+                for attr_name in ['CIRCLED', 'NOTE', 'TAKE', 'SCENE', 'CATEGORY', 'SUBCATEGORY']:
+                    if hasattr(ixml, attr_name):
+                        try:
+                            result["metadata"]["ixml"][attr_name] = getattr(ixml, attr_name)
+                        except Exception as e:
+                            result["errors"].append(f"Error reading ixml.{attr_name}: {str(e)}")
+        except Exception as e:
+            result["errors"].append(f"Error reading WAV file: {str(e)}")
+            if debug:
+                traceback.print_exc()
+        
+        # Calculate analysis time
+        result["analysis_time_ms"] = int((time.time() - start_time) * 1000)
+        return result
+        
     except Exception as e:
-        print(f"Error extracting iXML metadata: {e}")
+        # Completely unexpected error
+        return {
+            "file_path": wav_path,
+            "errors": [f"Fatal error during analysis: {str(e)}"],
+            "analysis_time_ms": int((time.time() - start_time) * 1000) if 'start_time' in locals() else 0
+        }
+
+
+def analyze_files(file_paths, output=None, debug=False, max_workers=None, print_progress=True):
+    """Analyze multiple WAV files in parallel."""
+    results = []
+    total_files = len(file_paths)
     
-    return metadata
+    if max_workers is None:
+        max_workers = max(1, multiprocessing.cpu_count() - 1)  # Leave one CPU free
+    
+    start_time = time.time()
+    
+    # Define a callback function for progress reporting
+    def update_progress(i, result):
+        if print_progress and (i % 10 == 0 or i == total_files - 1):
+            errors = len(result.get("errors", []))
+            filename = os.path.basename(result["file_path"])
+            status = "✓" if errors == 0 else f"✗ ({errors} errors)"
+            percent = int((i + 1) / total_files * 100)
+            elapsed = time.time() - start_time
+            remaining = (elapsed / (i + 1)) * (total_files - i - 1) if i > 0 else 0
+            
+            sys.stdout.write(f"\r[{percent:3d}%] {i+1}/{total_files} | {filename} {status} | "
+                             f"Elapsed: {elapsed:.1f}s | Remaining: {remaining:.1f}s")
+            sys.stdout.flush()
+    
+    # Process files in batches to control memory usage
+    batch_size = 100
+    for start_idx in range(0, total_files, batch_size):
+        end_idx = min(start_idx + batch_size, total_files)
+        batch = file_paths[start_idx:end_idx]
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Use a dict to preserve order
+            futures = {executor.submit(analyze_wav_file, path, debug): i 
+                      for i, path in enumerate(batch, start=start_idx)}
+            
+            for future in futures:
+                i = futures[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                    update_progress(i, result)
+                except Exception as e:
+                    results.append({
+                        "file_path": file_paths[i],
+                        "errors": [f"Exception during analysis: {str(e)}"]
+                    })
+                    if debug:
+                        traceback.print_exc()
+                    update_progress(i, {"file_path": file_paths[i], "errors": [str(e)]})
+    
+    if print_progress:
+        print()  # New line after progress
+    
+    # Write results to output file if specified
+    if output:
+        with open(output, 'w') as f:
+            json.dump(results, f, indent=2)
+    
+    # Print summary
+    total_time = time.time() - start_time
+    error_count = sum(1 for r in results if r.get("errors"))
+    
+    print(f"\nAnalysis complete:")
+    print(f"- Processed {len(results)} files in {total_time:.2f} seconds")
+    print(f"- Files with errors: {error_count}")
+    print(f"- Average time per file: {(total_time / len(results)) * 1000:.1f} ms")
+    
+    if output:
+        print(f"- Detailed results saved to: {output}")
+    
+    return results
 
 
 def main():
-    """Main function to run the diagnostic tool"""
-    if len(sys.argv) < 2:
-        print("Usage: python diagnose.py <wav_file_or_directory>")
-        sys.exit(1)
+    """Main function for the diagnostic tool."""
+    parser = argparse.ArgumentParser(description="Diagnostic tool for WAV metadata")
+    parser.add_argument("path", help="Path to WAV file or directory containing WAV files")
+    parser.add_argument("--recursive", "-r", action="store_true", help="Recursively search for WAV files in directories")
+    parser.add_argument("--output", "-o", help="Output JSON file for detailed results")
+    parser.add_argument("--debug", "-d", action="store_true", help="Enable debug output")
+    parser.add_argument("--workers", "-w", type=int, help="Number of worker threads (default: CPU count - 1)")
     
-    path = sys.argv[1]
+    args = parser.parse_args()
     
-    if os.path.isfile(path) and path.lower().endswith('.wav'):
-        analyze_wav_file(path)
-    elif os.path.isdir(path):
-        # Find first 3 wav files in the directory
-        wav_files = []
-        for root, _, files in os.walk(path):
-            for file in files:
-                if file.lower().endswith('.wav'):
-                    wav_files.append(os.path.join(root, file))
-                    if len(wav_files) >= 3:
-                        break
-            if len(wav_files) >= 3:
-                break
+    # Check if path exists
+    if not os.path.exists(args.path):
+        print(f"Error: Path does not exist: {args.path}")
+        return 1
+    
+    # Collect files to analyze
+    if os.path.isfile(args.path):
+        # Single file
+        if not args.path.lower().endswith('.wav'):
+            print(f"Error: Not a WAV file: {args.path}")
+            return 1
         
-        if not wav_files:
-            print(f"No WAV files found in {path}")
-            sys.exit(1)
-        
-        print(f"Found {len(wav_files)} WAV files, analyzing...")
-        for wav_file in wav_files:
-            analyze_wav_file(wav_file)
+        files = [args.path]
     else:
-        print(f"Invalid path: {path}")
-        sys.exit(1)
+        # Directory - find WAV files
+        pattern = "**/*.wav" if args.recursive else "*.wav"
+        files = glob.glob(os.path.join(args.path, pattern), recursive=args.recursive)
+        
+        if not files:
+            print(f"Error: No WAV files found in {args.path}")
+            return 1
+    
+    print(f"Found {len(files)} WAV files to analyze")
+    analyze_files(files, args.output, args.debug, args.workers)
+    return 0
 
 
 if __name__ == "__main__":
-    main() 
+    sys.exit(main()) 

@@ -1,4 +1,11 @@
 PyQt6>=6.4.0
 soundfile>=0.12.1
 wavinfo>=0.1.5
-numpy>=1.22.0 
+numpy>=1.22.0
+# Added for improved performance
+cachetools>=5.3.0
+# For image rendering
+PyQt6-Qt6>=6.4.0
+PyQt6-sip>=13.4.0
+# For SVG rendering
+PyQt6-QtSvg>=6.4.0 

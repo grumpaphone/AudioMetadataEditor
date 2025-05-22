@@ -242,99 +242,6 @@ class BatchCommand(UndoRedoCommand):
         """Redo all commands in sequence"""
         return self.execute()
 
-class FileRemoveCommand(UndoRedoCommand):
-    """Command to remove one or more files from the disk and the application list."""
-    
-    def __init__(self, editor, file_data_list_to_remove):
-        """
-        Initialize with the editor and a list of file data to remove.
-        Each item in file_data_list_to_remove should be a tuple:
-        (original_index_in_all_files, file_path, metadata_dict)
-        """
-        description = f"Remove {len(file_data_list_to_remove)} file(s) from list" # Updated description
-        super().__init__(description)
-        self.editor = editor
-        # Store a copy of the list and its items to avoid modification issues
-        self.files_to_remove_data = [(idx, path, data.copy()) for idx, path, data in file_data_list_to_remove]
-        # self.successfully_removed_paths = [] # Keep track of files actually deleted from disk - Now tracks files removed from list
-        self.removed_file_paths_for_undo = []
-
-    def execute(self):
-        """Execute the file removal operation (from list only)."""
-        self.removed_file_paths_for_undo = [] # Reset for current execution
-        
-        # Collect paths of files to be removed from the list
-        paths_to_remove_from_list = {data[1] for data in self.files_to_remove_data}
-
-        if not paths_to_remove_from_list:
-            self.editor.status_label.setText("No files selected to remove from the list.")
-            return False
-
-        # Store paths that are actually found and will be removed, for undo purposes
-        original_all_files_count = len(self.editor.all_files)
-        
-        # Filter out the files from self.editor.all_files
-        new_all_files = []
-        for path, meta in self.editor.all_files:
-            if path in paths_to_remove_from_list:
-                self.removed_file_paths_for_undo.append(path) # Track for undo
-            else:
-                new_all_files.append((path, meta))
-        
-        self.editor.all_files = new_all_files
-        
-        removed_count = original_all_files_count - len(self.editor.all_files)
-
-        if removed_count == 0:
-            self.editor.status_label.setText("Files to remove were not found in the current list.")
-            return False # Indicate no change was made
-
-        self.editor.changes_pending = True # Assuming removing from list is a pending change
-        self.editor.filter_table()  # This will update filtered_rows and refresh the UI
-        self.editor.status_label.setText(f"Removed {removed_count} file(s) from the list.")
-        self.editor.update_undo_redo_buttons()
-        return True
-
-    def undo(self):
-        """Undo the file removal (restores to list only)."""
-        if not self.removed_file_paths_for_undo:
-            self.editor.status_label.setText("Undo: No files were previously removed from the list by this action.")
-            return True
-
-        files_re_added_count = 0
-        # Find the original data for the files that were removed
-        # This relies on self.files_to_remove_data holding all originally targeted files
-        for original_idx, file_path, metadata in self.files_to_remove_data:
-            if file_path in self.removed_file_paths_for_undo: # Check if this specific file was indeed removed by execute()
-                # Check if it's already back (e.g. if undo was called multiple times or manually added)
-                if not any(f[0] == file_path for f in self.editor.all_files):
-                    self.editor.all_files.append((file_path, metadata))
-                    files_re_added_count +=1
-        
-        if files_re_added_count == 0:
-             self.editor.status_label.setText(f"Undo: Files were already present in the list.")
-             return True
-
-
-        # Re-sort if a sort order is active
-        if self.editor.current_sort_column_index != -1:
-            try:
-                self.editor.all_files.sort(
-                    key=lambda item: self.editor._get_sort_key(item, self.editor.current_sort_column_index),
-                    reverse=(self.editor.current_sort_order == Qt.SortOrder.DescendingOrder)
-                )
-            except Exception as e:
-                print(f"Error during undo re-sorting: {e}")
-        
-        self.editor.changes_pending = True # Re-adding to list is a pending change
-        self.editor.filter_table()
-        self.editor.status_label.setText(f"Undo: Restored {files_re_added_count} file(s) to the list.")
-        self.editor.update_undo_redo_buttons()
-        # QMessageBox.information(self.editor, "Undo Information",
-        #                         "The selected file(s) have been restored to the application list. "
-        #                         "They were not previously deleted from your computer's file system by this application.")
-        return True
-
 class UndoRedoStack:
     """Stack to manage undo and redo operations"""
     
@@ -432,68 +339,46 @@ class UndoRedoStack:
 class MacStyleDelegate(QStyledItemDelegate):
     """Custom delegate for macOS style table items"""
     def paint(self, painter, option, index):
-        # These colors will be sourced from the main app's theme in a real scenario
-        # For this example, we'll use common theme colors directly.
-        # In a full refactor, these would be passed or accessed from a central theme manager.
-        
-        # Get theme colors (assuming they are somehow accessible, e.g. from parent app or a global theme)
-        # This is a simplified approach for the edit. A more robust solution might involve
-        # passing the theme to the delegate or having a singleton theme manager.
-        # For now, we'll hardcode the intended new theme colors here for demonstration of the delegate part.
-        
-        # Core Palette
-        CP_MEDIUM_TEAL = "#589DA4"
-        CP_OFF_WHITE_BG = "#F0F5E2"
-        
-        # Text Colors
-        TC_PRIMARY_ON_DARK = "#FFFFFF"
-        TC_PRIMARY_ON_LIGHT = "#1A1A1A"
-
-        # Slightly darker version of off_white_bg for alternating rows if not handled by stylesheet
-        # ALT_ROW_BG = "#E6EBD5" # Example: darken_color(CP_OFF_WHITE_BG, 0.95)
-
+        # Save painter state
         painter.save()
         
+        # Draw background
         if option.state & QStyle.StateFlag.State_Selected:
-            # Use a theme color for selection
-            painter.fillRect(option.rect, QColor(CP_MEDIUM_TEAL))
-            painter.setPen(QColor(TC_PRIMARY_ON_DARK))
+            painter.fillRect(option.rect, QColor("#E0F2FF"))  # Light blue for selection
+        elif index.row() % 2 == 0:  # Use index.row() instead of option.row
+            painter.fillRect(option.rect, QColor("#FAFAFA"))  # Very light gray for alternating
         else:
-            # The QTableWidget's alternate-background-color stylesheet property should handle this.
-            # Delegate just needs to paint a base background.
-            painter.fillRect(option.rect, QColor(CP_OFF_WHITE_BG))
-            painter.setPen(QColor(TC_PRIMARY_ON_LIGHT))
-
-        text_rect = option.rect.adjusted(12, 6, -12, -6)
+            painter.fillRect(option.rect, QColor("#FFFFFF"))  # White
+        
+        # Draw text with proper padding
+        text_rect = option.rect.adjusted(12, 6, -12, -6)  # Add padding
+        
+        # Set text color
+        if option.state & QStyle.StateFlag.State_Selected:
+            painter.setPen(QColor("#000000"))  # Black text on selection
+        else:
+            painter.setPen(QColor("#000000"))  # Black text normally
+            
         painter.drawText(text_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, index.data())
         
+        # Restore painter state
         painter.restore()
 
 
 class AnimatedPushButton(QPushButton):
     """Custom button with click animation"""
-    def __init__(self, text="", parent=None, normal_color_hex=None, hover_color_hex=None, click_color_hex=None, text_color_hex=None):
+    def __init__(self, text="", parent=None):
         super().__init__(text, parent)
-        self.setObjectName("animated_button")
-        self.setProperty("class", "secondary")
-
-        # Theme colors to be passed or sourced from a central theme manager
-        # Defaults are set if specific colors are not provided via constructor
-        self._normal_color_hex = normal_color_hex if normal_color_hex else "#85A156" # CP_LIGHT_OLIVE_GREEN
-        self._hover_color_hex = hover_color_hex if hover_color_hex else "#748D44"   # CP_OLIVE_GREEN
-        self._click_color_hex = click_color_hex if click_color_hex else "#6A7F3C"   # Darker CP_OLIVE_GREEN
-        self._text_color_hex = text_color_hex if text_color_hex else "#1A1A1A"       # TC_PRIMARY_ON_LIGHT
-
-        self._normal_color = QColor(self._normal_color_hex)
-        self._hover_color = QColor(self._hover_color_hex)
-        self._click_color = QColor(self._click_color_hex)
+        # Initialize attributes first
+        self._normal_color = QColor(245, 236, 220, 153)  # 60% opacity
+        self._hover_color = QColor(232, 223, 208, 204)   # 80% opacity
+        self._click_color = QColor(224, 216, 201, 230)   # 90% opacity
         self._current_color = self._normal_color
         
+        # Then create the animation
         self._animation = QPropertyAnimation(self, b"background_color")
         self._animation.setDuration(150)
-        
-        # No inline styling here - use the stylesheet from apply_stylesheet
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setStyleSheet(f"background-color: {self._normal_color.name()}")
         
     def get_background_color(self):
         return self._current_color
@@ -501,8 +386,7 @@ class AnimatedPushButton(QPushButton):
     def set_background_color(self, color):
         if self._current_color != color:
             self._current_color = color
-            # Update only the background color property
-            self.setStyleSheet(f"background-color: {color.name()}");
+            self.setStyleSheet(f"background-color: {color.name()}")
             
     background_color = pyqtProperty(QColor, get_background_color, set_background_color)
     
@@ -540,23 +424,14 @@ class AnimatedPushButton(QPushButton):
 class AnimatedPrimaryButton(AnimatedPushButton):
     """Primary styled animated button"""
     def __init__(self, text="", parent=None):
-        # These would come from the new theme definition
-        normal_hex = "#27768A"  # CP_DARK_TEAL
-        hover_hex = "#589DA4"    # CP_MEDIUM_TEAL
-        click_hex = "#748D44"    # CP_OLIVE_GREEN (for distinct click)
-        text_hex = "#FFFFFF"     # TC_PRIMARY_ON_DARK
-
-        super().__init__(text, parent, normal_color_hex=normal_hex, hover_color_hex=hover_hex, click_color_hex=click_hex, text_color_hex=text_hex)
-        # Override the class property to use primary button styling from stylesheet
-        self.setProperty("class", "primary")
-        self.setObjectName("animated_primary_button")
-
-    # Override set_background_color to maintain primary button style (no border)
-    def set_background_color(self, color):
-        if self._current_color != color:
-            self._current_color = color
-            # Only update the background color while maintaining other styles from stylesheet
-            self.setStyleSheet(f"background-color: {color.name()}");
+        super().__init__(text, parent)
+        # Use primary colors
+        self._normal_color = QColor(196, 181, 159, 230)  # 90% opacity
+        self._hover_color = QColor(181, 167, 144, 242)   # 95% opacity
+        self._click_color = QColor(166, 152, 127, 255)   # 100% opacity
+        self._current_color = self._normal_color
+        self.setStyleSheet(f"background-color: {self._normal_color.name()}; color: white; border: none;")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
 
 
 class FileLoadWorker(QThread):
@@ -617,7 +492,7 @@ class FileLoadWorker(QThread):
                             "File Path": file_path,
                             "Error": str(e)
                         }
-                    results.append((file_path, metadata))
+                        results.append((file_path, metadata))
                     
                     # Emit progress
                     self.progress.emit(current_idx + 1, total_files, os.path.basename(file_path))
@@ -665,35 +540,33 @@ class AudioMetadataEditor(QMainWindow):
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         
-        # Theme setting - 'light' or 'dark'
-        self.current_theme = 'light'
-        
         # Set the application style
         self.apply_stylesheet()
         
         # Setup UI
         self.central_widget = QWidget()
         self.central_widget.setObjectName("central_widget")
+        self.central_widget.setStyleSheet("""
+            #central_widget {
+                background-color: rgba(245, 236, 220, 0.92);
+                border-radius: 10px;
+            }
+        """)
         self.setCentralWidget(self.central_widget)
         
         # Initialize undo/redo stack
         self.undo_redo_stack = UndoRedoStack()
         
-        # Initialize sort state
-        self.current_sort_column_index = -1  # No column sorted initially
-        self.current_sort_order = Qt.SortOrder.AscendingOrder
-        
-        # Main layout with optimized margins
+        # Main layout with reduced margins
         main_layout = QVBoxLayout(self.central_widget)
-        main_layout.setContentsMargins(12, 10, 12, 10)  # Slightly increased margins for better spacing
-        main_layout.setSpacing(10)  # Increased spacing between elements
+        main_layout.setContentsMargins(10, 8, 10, 8)  # Reduced margins
+        main_layout.setSpacing(8)  # Reduced spacing
         
         # Add integrated title bar with window controls and app controls
         self.create_integrated_title_bar(main_layout)
         
         # Set up keyboard shortcuts
-        # Commenting this out temporarily as the method is not yet implemented
-        # self.setup_shortcuts()
+        self.setup_shortcuts()
         
         # Enable drag and drop
         self.setAcceptDrops(True)
@@ -750,10 +623,6 @@ class AudioMetadataEditor(QMainWindow):
         self.metadata_table.setEditTriggers(QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.SelectedClicked)
         self.metadata_table.verticalHeader().setVisible(False)
         
-        # Enable sorting by column header click
-        self.metadata_table.setSortingEnabled(False)
-        self.metadata_table.horizontalHeader().sectionClicked.connect(self.sort_table_by_column)
-        
         # Set horizontal header properties
         header = self.metadata_table.horizontalHeader()
         
@@ -792,10 +661,6 @@ class AudioMetadataEditor(QMainWindow):
         self.status_label.setProperty("class", "status-label")
         self.content_layout.addWidget(self.status_label)
         
-        # Initialize search components (temporary fix)
-        self.search_input = QLineEdit()
-        self.current_search_field = "All Fields"
-        
         # Data storage
         self.all_files = []
         self.filtered_rows = []
@@ -813,825 +678,244 @@ class AudioMetadataEditor(QMainWindow):
         self.file_load_worker = None
         self.progress_dialog = None
     
-    def _get_sort_key(self, item, column_index):
-        """Helper function to get the sort key for a given item and column index."""
-        file_path, metadata = item
-        
-        # Column mapping based on self.metadata_table.setHorizontalHeaderLabels
-        # ["Filename", "Show", "Scene", "Take", "Category", "Subcategory", "Slate", 
-        #  "ixmlNote", "ixmlWildtrack", "ixmlCircled", "File Path"]
-        
-        value = ""
-        if column_index == 0:  # Filename
-            value = os.path.basename(file_path)
-        elif column_index == 1:  # Show
-            value = metadata.get("Show", "")
-        elif column_index == 2:  # Scene
-            value = metadata.get("Scene", "")
-        elif column_index == 3:  # Take
-            take_str = metadata.get("Take", "")
-            try:
-                # Convert to int, then to a zero-padded string for correct lexicographical sorting
-                return "{:08d}".format(int(take_str)) 
-            except ValueError:
-                # If not an int, return as a lowercase string to sort with other strings
-                return take_str.lower()
-        elif column_index == 4:  # Category
-            value = metadata.get("Category", "")
-        elif column_index == 5:  # Subcategory
-            value = metadata.get("Subcategory", "")
-        elif column_index == 6:  # Slate
-            value = metadata.get("Slate", "")
-        elif column_index == 7:  # ixmlNote
-            value = metadata.get("ixmlNote", "")
-        elif column_index == 8:  # ixmlWildtrack
-            value = metadata.get("ixmlWildtrack", "") 
-        elif column_index == 9:  # ixmlCircled
-            value = metadata.get("ixmlCircled", "")
-        elif column_index == 10: # File Path
-            value = file_path
-            
-        # Ensure consistent string type for sorting, and make it case-insensitive
-        return str(value).lower()
-
-    def sort_table_by_column(self, logical_index):
-        """Sorts the table by the clicked column header."""
-        if self.current_sort_column_index == logical_index:
-            # Toggle sort order
-            if self.current_sort_order == Qt.SortOrder.AscendingOrder:
-                self.current_sort_order = Qt.SortOrder.DescendingOrder
-            else:
-                self.current_sort_order = Qt.SortOrder.AscendingOrder
-        else:
-            # New column clicked, default to ascending
-            self.current_sort_column_index = logical_index
-            self.current_sort_order = Qt.SortOrder.AscendingOrder
-            
-        # Update header sort indicator
-        self.metadata_table.horizontalHeader().setSortIndicator(
-            self.current_sort_column_index,
-            self.current_sort_order
-        )
-            
-        # Sort self.all_files
-        if self.all_files:
-            try:
-                self.all_files.sort(
-                    key=lambda item: self._get_sort_key(item, self.current_sort_column_index),
-                    reverse=(self.current_sort_order == Qt.SortOrder.DescendingOrder)
-                )
-            except Exception as e:
-                print(f"Error during sorting: {e}")
-                # Optionally, revert sort or show an error to the user
-                return
-
-        # After sorting all_files, the filter_table method will rebuild
-        # filtered_rows based on the new order and then update the display.
-        self.filter_table()
-
     def apply_stylesheet(self):
-        """Apply a modern macOS-inspired stylesheet with translucent elements and dark mode support"""
-
-        # Helper function to darken a color
-        def darken_color(hex_color, factor):
-            if hex_color.startswith('#'):
-                hex_color = hex_color[1:]
-            r = int(hex_color[0:2], 16)
-            g = int(hex_color[2:4], 16)
-            b = int(hex_color[4:6], 16)
-            r = max(0, int(r * factor))
-            g = max(0, int(g * factor))
-            b = max(0, int(b * factor))
-            return f"#{r:02x}{g:02x}{b:02x}"
-
-        # Helper function to lighten a color
-        def lighten_color(hex_color, factor):
-            if hex_color.startswith('#'):
-                hex_color = hex_color[1:]
-            r = int(hex_color[0:2], 16)
-            g = int(hex_color[2:4], 16)
-            b = int(hex_color[4:6], 16)
-            r = min(255, int(r * factor))
-            g = min(255, int(g * factor))
-            b = min(255, int(b * factor))
-            return f"#{r:02x}{g:02x}{b:02x}"
-
-        # --- Theme Definition based on current mode ---
-        if self.current_theme == 'light':
-            # Light Theme Colors - Inspired by ClickUp (Brighter, clean aesthetic)
-            CP = {
-                "purple": "#7B61FF", # ClickUp Purple as primary accent
-                "blue_accent": "#40DDFF",
-                "pink_accent": "#FA12E3",
-                "navy_deep": "#101F52", # For dark text or accents
-
-                "light_bg_primary": "#FFFFFF", # Pure white for main background
-                "light_bg_secondary": "#F7F7F9", # Very light grey for secondary elements
-                "light_bg_tertiary": "#EFF0F2",  # Slightly darker grey for cards/borders
-
-                "accent_teal_clickup": "#40c4aa", # Teal accent from ClickUp
-                "grey_text_light": "#5E6C84",  # Softer grey for secondary text on light bg
-                "dark_text_primary": "#172B4D", # Primary dark text (near black/navy)
-                
-                # Additional colors needed for buttons
-                "light_olive_green": "#85A156",
-                "olive_green": "#748D44",
-                "dark_teal": "#27768A",
-                "medium_teal": "#589DA4"
-            }
-
-            TC = {
-                "primary_on_light": CP["dark_text_primary"],
-                "secondary_on_light": CP["grey_text_light"],
-                "primary_on_dark_accent": CP["light_bg_primary"], # Text for on accent-colored backgrounds
-                "primary_on_dark": "#FFFFFF", # Adding this for button text on dark backgrounds
-                "link": CP["purple"],
-            }
-            
-            UA = {
-                "border_light": CP["light_bg_tertiary"],
-                "border_medium": darken_color(CP["light_bg_tertiary"], 0.95),
-                
-                "scrollbar_track": CP["light_bg_secondary"],
-                "scrollbar_handle": CP["accent_teal_clickup"],
-                "scrollbar_handle_hover": darken_color(CP["accent_teal_clickup"], 0.9),
-    
-                "title_bar_bg": CP["light_bg_secondary"],
-                
-                "selection_bg": CP["purple"],
-                "selection_fg": TC["primary_on_dark_accent"],
-    
-                "window_bg": CP["light_bg_primary"],
-                "content_bg": CP["light_bg_primary"],
-                
-                "table_bg": CP["light_bg_primary"],
-                "table_alt_bg": CP["light_bg_secondary"],
-    
-                "tooltip_bg": CP["dark_text_primary"],
-                "tooltip_fg": CP["light_bg_primary"],
-
-                # Button specific variations - ClickUp inspired for light mode
-                "button_secondary_bg": CP["light_bg_tertiary"],
-                "button_secondary_fg": TC["primary_on_light"],
-                "button_secondary_hover_bg": darken_color(CP["light_bg_tertiary"], 0.95),
-                "button_secondary_pressed_bg": darken_color(CP["light_bg_tertiary"], 0.9),
-                "button_secondary_border": darken_color(CP["light_bg_tertiary"], 0.9),
-    
-                "button_primary_bg": CP["purple"],
-                "button_primary_fg": TC["primary_on_dark_accent"],
-                "button_primary_hover_bg": lighten_color(CP["purple"], 1.1),
-                "button_primary_pressed_bg": lighten_color(CP["purple"], 1.2), 
-            }
-        else:
-            # Dark Theme Colors - Inspired by ClickUp
-            CP = {
-                "purple": "#7B61FF",  # ClickUp's primary purple (slightly adjusted from #7612FA for better visibility if needed)
-                "blue_accent": "#40DDFF", # ClickUp's Blue
-                "pink_accent": "#FA12E3",  # ClickUp's Pink
-                "yellow_accent": "#FFD700", # ClickUp's Yellow
-                "navy_deep": "#101F52",    # ClickUp's Navy
-
-                # Core UI Colors for Dark Mode based on common ClickUp screenshots
-                "dark_bg_primary": "#1E1F21", # A common dark background in ClickUp
-                "dark_bg_secondary": "#2C2D30", # Slightly lighter for elements
-                "dark_bg_tertiary": "#3A3B3F",  # For cards, modals, etc.
-
-                "accent_teal_clickup": "#40c4aa", # A teal/turquoise often seen as accent
-                "grey_text_clickup": "#c1c2c6",  # Common secondary text color
-                "almost_white_text": "#F0F0F0" # Primary text on dark
-            }
-
-            TC = {
-                "primary_on_dark": CP["almost_white_text"],
-                "secondary_on_dark": CP["grey_text_clickup"],
-                "primary_on_light_accent": CP["dark_bg_primary"], # Text for on accent-colored backgrounds
-                "link": CP["blue_accent"],
-            }
-
-            UA = {
-                "border_light": lighten_color(CP["dark_bg_primary"], 1.2), # e.g. #2A2B2E
-                "border_medium": lighten_color(CP["dark_bg_primary"], 1.4), # e.g. #38393D
-
-                "scrollbar_track": CP["dark_bg_secondary"],
-                "scrollbar_handle": CP["accent_teal_clickup"],
-                "scrollbar_handle_hover": lighten_color(CP["accent_teal_clickup"], 1.1),
-
-                "title_bar_bg": CP["dark_bg_secondary"], # "#242424", - original value
-                
-                "selection_bg": CP["purple"], # Using ClickUp Purple for selection
-                "selection_fg": TC["primary_on_dark"],
-
-                "window_bg": CP["dark_bg_primary"],
-                "content_bg": CP["dark_bg_primary"],
-                
-                "table_bg": CP["dark_bg_primary"],
-                "table_alt_bg": CP["dark_bg_secondary"], # darken_color(CP["dark_bg_primary"], 1.1) for subtle difference
-
-                "tooltip_bg": CP["dark_bg_tertiary"],
-                "tooltip_fg": TC["primary_on_dark"],
-                
-                # Button specific variations - ClickUp inspired
-                "button_secondary_bg": CP["dark_bg_tertiary"],
-                "button_secondary_fg": TC["primary_on_dark"],
-                "button_secondary_hover_bg": lighten_color(CP["dark_bg_tertiary"], 1.1),
-                "button_secondary_pressed_bg": lighten_color(CP["dark_bg_tertiary"], 1.2),
-                "button_secondary_border": CP["dark_bg_tertiary"],
-
-                "button_primary_bg": CP["purple"], # ClickUp Purple
-                "button_primary_fg": TC["primary_on_dark"],
-                "button_primary_hover_bg": lighten_color(CP["purple"], 1.15),
-                "button_primary_pressed_bg": lighten_color(CP["purple"], 1.25),
-            }
-            
-        # Common button styles regardless of theme
-        if self.current_theme == 'light':
-            UA.update({
-                # Button specific variations
-                "button_secondary_bg": CP["light_olive_green"],
-                "button_secondary_fg": TC["primary_on_light"],
-                "button_secondary_hover_bg": CP["olive_green"],
-                "button_secondary_pressed_bg": darken_color(CP["olive_green"], 0.9),
-                "button_secondary_border": CP["olive_green"],
-    
-                "button_primary_bg": CP["dark_teal"],
-                "button_primary_fg": TC["primary_on_dark"],
-                "button_primary_hover_bg": CP["medium_teal"],
-                "button_primary_pressed_bg": CP["olive_green"], # Using olive for distinct pressed
-            })
-        # --- End of New Theme Definition ---
-
-        if sys.platform == "darwin":
-            app_font = QFont(".AppleSystemUIFont", 12)
-        else:
-            app_font = QFont("Segoe UI", 12)
+        """Apply a modern macOS-inspired stylesheet with translucent elements"""
+        # Set system font (SF Pro-like) - using system font family instead of specific name
+        if sys.platform == "darwin":  # macOS
+            app_font = QFont(".AppleSystemUIFont", 12)  # Smaller font size
+        else:  # Windows/Linux
+            app_font = QFont("Segoe UI", 12)  # Smaller font size
         QApplication.setFont(app_font)
         
-        # ClickUp style requires less transparency in dark mode, more defined elements in light
-        bg_opacity_dark = "1.0"
-        bg_opacity_light = "1.0" # ClickUp light mode is typically opaque
+        # Create and apply stylesheet
+        stylesheet = """
+        /* Main window - higher alpha for frostier effect */
+        QMainWindow {
+            background-color: rgba(245, 236, 220, 0.92);
+            border: none;
+            border-radius: 10px;
+        }
         
-        current_bg_opacity = bg_opacity_dark if self.current_theme == 'dark' else bg_opacity_light
+        /* Content container */
+        .content-container {
+            background-color: rgba(245, 236, 220, 0.85);
+            border-radius: 10px;
+        }
         
-        stylesheet = f"""
-        QMainWindow {{
-            background-color: {UA["window_bg"]};
-            border: 1px solid {UA["border_medium"] if self.current_theme == 'dark' else UA["border_light"]}; /* Subtle border for dark, slightly more for light */
-            border-radius: 8px; /* Softer radius like ClickUp */
-        }}
-        
-        #central_widget {{
-            background-color: {UA["window_bg"]}; /* Use window_bg instead of transparent */
+        /* Icon button style */
+        .icon-button {
+            background-color: rgba(245, 236, 220, 0.75);
+            border: none;
             border-radius: 8px;
-        }}
+            padding: 8px;
+        }
         
-        .content-container {{
-            background-color: {UA["content_bg"]};
-            border-radius: 6px; /* Inner content slightly less rounded */
-            padding: 5px; /* Add some padding */
-        }}
+        .icon-button:hover {
+            background-color: rgba(232, 223, 208, 0.85);
+        }
         
-        /* Default QPushButton: Secondary action button style - ClickUp like */
-        QPushButton {{
-            background-color: {UA["button_secondary_bg"]};
-            color: {UA["button_secondary_fg"]};
-            border: 1px solid {UA["button_secondary_border"] if self.current_theme == 'dark' else UA["border_medium"]};
-            border-radius: 6px; 
-            font-weight: 500; /* Medium weight, common in ClickUp */
-            font-size: 13px;
-            padding: 8px 14px; /* ClickUp buttons have generous padding */
-            min-height: 30px; 
-        }}
+        .icon-button:pressed {
+            background-color: rgba(224, 216, 201, 0.92);
+        }
         
-        QPushButton:hover {{
-            background-color: {UA["button_secondary_hover_bg"]};
-        }}
-        
-        QPushButton:pressed {{
-            background-color: {UA["button_secondary_pressed_bg"]};
-        }}
-
-        QPushButton.secondary {{
-            background-color: {UA["button_secondary_bg"]};
-            color: {UA["button_secondary_fg"]};
-            border: 1px solid {UA["button_secondary_border"] if self.current_theme == 'dark' else UA["border_medium"]};
-            border-radius: 6px;
+        /* Action button style */
+        .action-button {
+            background-color: rgba(245, 236, 220, 0.75);
+            color: #000000;
+            border: none;
+            border-radius: 8px;
             font-weight: 500;
             font-size: 13px;
-            padding: 8px 14px;
-            min-height: 30px;
-        }}
+        }
         
-        QPushButton.secondary:hover {{
-            background-color: {UA["button_secondary_hover_bg"]};
-        }}
+        .action-button:hover {
+            background-color: rgba(232, 223, 208, 0.85);
+        }
         
-        QPushButton.secondary:pressed {{
-            background-color: {UA["button_secondary_pressed_bg"]};
-        }}
-
-        #title_bar QPushButton {{
-            padding: 6px 10px; /* Slightly less padding for title bar buttons */
-            min-height: 28px;
-        }}
-
-        /* Primary action button style - ClickUp like */
-        QPushButton.primary {{
-            background-color: {UA["button_primary_bg"]};
-            color: {UA["button_primary_fg"]};
+        .action-button:pressed {
+            background-color: rgba(224, 216, 201, 0.92);
+        }
+        
+        /* Primary button style */
+        .action-button.primary {
+            background-color: rgba(196, 181, 159, 0.92);
+            color: white;
             border: none;
+        }
+        
+        .action-button.primary:hover {
+            background-color: rgba(181, 167, 144, 0.95);
+        }
+        
+        .action-button.primary:pressed {
+            background-color: rgba(166, 152, 127, 1.0);
+        }
+        
+        /* QLineEdit styling */
+        QLineEdit {
+            border: 1px solid rgba(224, 216, 201, 0.8);
             border-radius: 6px;
-            font-weight: bold; /* Bold for primary actions */
+            padding: 4px 6px;
+            background-color: rgba(255, 255, 255, 0.85);
+            selection-background-color: rgba(196, 181, 159, 0.8);
+            selection-color: white;
+        }
+        
+        QLineEdit:focus {
+            border: 1px solid rgba(196, 181, 159, 0.92);
+            background-color: rgba(255, 255, 255, 0.95);
+        }
+        
+        /* Labels */
+        QLabel {
+            color: #000000;
             font-size: 13px;
-            padding: 8px 14px;
-            min-height: 30px;
-        }}
+        }
         
-        QPushButton.primary:hover {{
-            background-color: {UA["button_primary_hover_bg"]};
-        }}
+        /* Title label larger */
+        #title_label {
+            font-size: 18px;
+            font-weight: 500;
+            color: #000000;
+        }
         
-        QPushButton.primary:pressed {{
-            background-color: {UA["button_primary_pressed_bg"]};
-        }}
-        
-        QLineEdit {{
-            border: 1px solid {UA["border_medium"]};
-            border-radius: 6px;
-            padding: 8px 10px; /* More padding for better feel */
-            background-color: {CP["light_bg_primary"] if self.current_theme == 'light' else CP["dark_bg_secondary"]};
-            selection-background-color: {UA["selection_bg"]};
-            selection-color: {UA["selection_fg"]};
-            color: {TC["primary_on_light"] if self.current_theme == 'light' else TC["primary_on_dark"]};
-            font-size: 13px;
-        }}
-        
-        QLineEdit:focus {{
-            border: 1px solid {CP["purple"]}; 
-            background-color: {CP["light_bg_primary"] if self.current_theme == 'light' else CP["dark_bg_secondary"]};
-        }}
-        
-        QLabel {{
-            color: {TC["primary_on_light"] if self.current_theme == 'light' else TC["primary_on_dark"]};
-            font-size: 13px;
-            background-color: transparent; /* Ensure labels don't obscure backgrounds */
-        }}
-        
-        #title_label {{ 
-            font-size: 16px; /* Slightly smaller for a cleaner look */
-            font-weight: 600; /* Semibold */
-            color: {CP["purple"]};
-        }}
-
-        #app_title {{ 
-            font-weight: 600; /* Semibold */
-            font-size: 15px;
-            color: {TC["primary_on_light"] if self.current_theme == 'light' else TC["primary_on_dark"]};
-        }}
-        
-        QTableWidget {{
-            border: 1px solid {UA["border_medium"]};
-            background-color: {UA["table_bg"]}; 
-            selection-background-color: {UA["selection_bg"]};
-            selection-color: {UA["selection_fg"]};
-            alternate-background-color: {UA["table_alt_bg"]}; 
-            gridline-color: {UA["border_light"]};
-            color: {TC["primary_on_light"] if self.current_theme == 'light' else TC["primary_on_dark"]};
-            border-radius: 6px;
-            font-size: 13px;
-        }}
-        
-        QHeaderView::section {{
-            background-color: {UA["title_bar_bg"]}; 
-            padding: 10px 8px; /* More padding */
+        /* Table styling */
+        QTableWidget {
             border: none;
-            border-bottom: 1px solid {UA["border_medium"]};
-            font-weight: 600; /* Semibold headers */
-            color: {TC["primary_on_light"] if self.current_theme == 'light' else TC["primary_on_dark"]};
-            font-size: 12px; /* Slightly smaller header font */
-        }}
+            background-color: rgba(255, 255, 255, 0.9);
+            selection-background-color: rgba(232, 223, 208, 0.85);
+            alternate-background-color: rgba(249, 245, 239, 0.75);
+            gridline-color: rgba(232, 223, 208, 0.8);
+        }
         
-        .status-label {{
-            color: {TC["secondary_on_light"] if self.current_theme == 'light' else TC["secondary_on_dark"]};
+        QHeaderView::section {
+            background-color: rgba(255, 255, 255, 0.85);
+            padding: 6px;
+            border: none;
+            border-bottom: 1px solid rgba(224, 216, 201, 0.8);
+            font-weight: 500;
+            color: #333333;
+        }
+        
+        /* Status bar */
+        .status-label {
+            color: #666666;
             font-size: 12px;
-            padding: 6px 4px;
-        }}
+            padding: 4px;
+        }
         
-        QDialog {{
-            background-color: {UA["window_bg"]}; /* Use window_bg for consistency */
-            border: 1px solid {UA["border_medium"]};
+        /* Dialog styling */
+        QDialog {
+            background-color: rgba(245, 236, 220, 0.92);
             border-radius: 8px;
-        }}
+        }
         
-        QComboBox {{
-            border: 1px solid {UA["border_medium"]};
+        /* Dropdown/ComboBox styling */
+        QComboBox {
+            border: 1px solid rgba(208, 200, 185, 0.8);
             border-radius: 6px;
-            padding: 7px 10px;
-            background-color: {CP["light_bg_primary"] if self.current_theme == 'light' else CP["dark_bg_secondary"]};
-            color: {TC["primary_on_light"] if self.current_theme == 'light' else TC["primary_on_dark"]};
-            selection-background-color: {UA["selection_bg"]};
-            selection-color: {UA["selection_fg"]};
-            font-size: 13px;
-        }}
+            padding: 5px;
+            background-color: rgba(255, 255, 255, 0.85);
+            color: #333333;
+            selection-background-color: rgba(196, 181, 159, 0.8);
+            selection-color: white;
+        }
         
-        QComboBox::drop-down {{
+        QComboBox::drop-down {
             subcontrol-origin: padding;
             subcontrol-position: top right;
-            width: 22px;
-            border-left: 1px solid {UA["border_light"]};
-            border-top-right-radius: 6px;
-            border-bottom-right-radius: 6px;
-        }}
+            width: 20px;
+            border-left: 1px solid rgba(208, 200, 185, 0.8);
+            border-top-right-radius: 4px;
+            border-bottom-right-radius: 4px;
+        }
         
-        QComboBox::down-arrow {{
-            image: url(none); /* Consider using an SVG icon if possible or a char like ▼ */
-            width: 10px;
-            height: 10px;
-        }}
-        
-        QComboBox QAbstractItemView {{ 
-            background-color: {CP["light_bg_primary"] if self.current_theme == 'light' else CP["dark_bg_tertiary"]}; 
-            border: 1px solid {UA["border_medium"]};
-            color: {TC["primary_on_light"] if self.current_theme == 'light' else TC["primary_on_dark"]};
-            selection-background-color: {UA["selection_bg"]};
-            selection-color: {UA["selection_fg"]};
-            padding: 4px;
-            border-radius: 4px;
-        }}
-        
-        QSpinBox {{
-            border: 1px solid {UA["border_medium"]};
-            border-radius: 6px;
-            padding: 7px 10px;
-            background-color: {CP["light_bg_primary"] if self.current_theme == 'light' else CP["dark_bg_secondary"]};
-            selection-background-color: {UA["selection_bg"]};
-            selection-color: {UA["selection_fg"]};
-            color: {TC["primary_on_light"] if self.current_theme == 'light' else TC["primary_on_dark"]};
-            font-size: 13px;
-        }}
-
-        QSplitter::handle {{
-            background-color: {UA["border_light"]}; /* Thinner, less obtrusive handles */
-            width: 1px; /* For vertical splitter */
-            height: 1px; /* For horizontal splitter */
-        }}
-        
-        QMenu {{
-            background-color: {CP["light_bg_secondary"] if self.current_theme == 'light' else CP["dark_bg_tertiary"]};
-            border: 1px solid {UA["border_medium"]};
-            border-radius: 6px;
-            padding: 5px;
-            color: {TC["primary_on_light"] if self.current_theme == 'light' else TC["primary_on_dark"]};
-            font-size: 13px;
-        }}
-        
-        QMenu::item {{
-            padding: 8px 20px 8px 12px;
-            border-radius: 4px;
-            color: {TC["primary_on_light"] if self.current_theme == 'light' else TC["primary_on_dark"]};
-        }}
-        
-        QMenu::item:selected {{
-            background-color: {UA["selection_bg"]};
-            color: {UA["selection_fg"]};
-        }}
-        
-        QScrollBar:vertical {{
-            border: none;
-            background: {UA["scrollbar_track"]};
-            width: 12px; /* Slightly wider for easier interaction */
-            margin: 0px;
-            border-radius: 6px;
-        }}
-        
-        QScrollBar::handle:vertical {{
-            background: {UA["scrollbar_handle"]};
-            min-height: 25px;
-            border-radius: 6px;
-            border: 1px solid {darken_color(UA["scrollbar_handle"], 0.9) if self.current_theme == 'light' else lighten_color(UA["scrollbar_handle"], 1.1)}; /* Subtle border on handle */
-        }}
-        QScrollBar::handle:vertical:hover {{
-            background: {UA["scrollbar_handle_hover"]};
-        }}
-        
-        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-            height: 0px; /* No arrows for a cleaner look */
-        }}
-        
-        QScrollBar:horizontal {{
-            border: none;
-            background: {UA["scrollbar_track"]};
+        QComboBox::down-arrow {
+            width: 12px;
             height: 12px;
-            margin: 0px;
-            border-radius: 6px;
-        }}
-        
-        QScrollBar::handle:horizontal {{
-            background: {UA["scrollbar_handle"]};
-            min-width: 25px;
-            border-radius: 6px;
-            border: 1px solid {darken_color(UA["scrollbar_handle"], 0.9) if self.current_theme == 'light' else lighten_color(UA["scrollbar_handle"], 1.1)};
-        }}
-        QScrollBar::handle:horizontal:hover {{
-            background: {UA["scrollbar_handle_hover"]};
-        }}
-        
-        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
-            width: 0px;
-        }}
-
-        /* Custom title bar */
-        #title_bar {{
-            background-color: {UA["title_bar_bg"]};
-            border-top-left-radius: 8px;
-            border-top-right-radius: 8px;
-            border-bottom: 1px solid {UA["border_medium"]};
-            min-height: 44px; /* Ensure enough height */
-        }}
-        
-        /* Title bar buttons need alignment */
-        /* Title bar general button styles */
-        #title_bar QPushButton {{
-            vertical-align: middle;
-            border-radius: 4px;
-            min-height: 28px;
-            max-height: 28px;
-            padding: 3px;
-        }}
-        
-        /* Text buttons in the title bar should have consistent width */
-        #title_bar QPushButton[text]:not([text=""]) {{
-            min-width: 64px;
-            max-width: 64px;
-            padding: 3px 2px;
-        }}
-        
-        /* Action container buttons */
-        #browse_button {{
-            background-color: {UA["button_secondary_bg"]};
-            border: 1px solid {UA["button_secondary_border"]};
-        }}
-        
-        #browse_button:hover {{
-            background-color: {UA["button_secondary_hover_bg"]};
-        }}
-        
-        #extract_button {{
-            background-color: {UA["button_secondary_bg"]};
-            color: {UA["button_secondary_fg"]};
-            border: 1px solid {UA["button_secondary_border"]};
-            border-radius: 4px;
-            font-weight: 500;
-            font-size: 11px;
-            padding: 3px 5px;
-            text-align: center;
-            max-height: 28px;
-            min-height: 28px;
-        }}
-        
-        #extract_button:hover {{
-            background-color: {UA["button_secondary_hover_bg"]};
-        }}
-        
-        /* Dark mode button */
-        #dark_mode_button {{
-            font-size: 11px;
-            background-color: {UA["button_secondary_bg"]};
-            border: 1px solid {UA["button_secondary_border"]};
-        }}
-        
-        #dark_mode_button:hover {{
-            background-color: {UA["button_secondary_hover_bg"]};
-        }}
-        
-        /* Mirror panel button */
-        #mirror_panel_button {{
-            background-color: {UA["button_secondary_bg"]};
-            border: 1px solid {UA["button_secondary_border"]};
-        }}
-        
-        #mirror_panel_button:hover {{
-            background-color: {UA["button_secondary_hover_bg"]};
-        }}
-        
-        /* App title styling */
-        #app_title {{
-            font-weight: bold;
-            font-size: 14px;
-            color: {CP["dark_text_primary"] if self.current_theme == 'light' else CP["almost_white_text"]};
-        }}
-        
-        /* Animated buttons styling */
-        #animated_button {{
-            background-color: {UA["button_secondary_bg"]};
-            color: {UA["button_secondary_fg"]};
-            border: 1px solid {UA["button_secondary_border"]};
-            border-radius: 4px;
-            font-weight: 500;
-            font-size: 11px;
-            padding: 3px 8px;
-            max-height: 28px;
-            min-height: 26px;
-        }}
-        
-        #animated_button:hover {{
-            background-color: {UA["button_secondary_hover_bg"]};
-        }}
-        
-        #animated_button:pressed {{
-            background-color: {UA["button_secondary_pressed_bg"]};
-        }}
-        
-        #animated_primary_button {{
-            background-color: {UA["button_primary_bg"]};
-            color: {UA["button_primary_fg"]};
-            border: none;
-            border-radius: 4px;
-            font-weight: bold;
-            font-size: 11px;
-            padding: 3px 5px;
-            text-align: center;
-            max-height: 28px;
-            min-height: 28px;
-        }}
-        
-        #animated_primary_button:hover {{
-            background-color: {UA["button_primary_hover_bg"]};
-        }}
-        
-        #animated_primary_button:pressed {{
-            background-color: {UA["button_primary_pressed_bg"]};
-        }}
-
-        /* macOS-like window control buttons - standard fixed colors */
-        #close_button, #minimize_button, #maximize_button {{
-            min-width: 12px; min-height: 12px;
-            max-width: 12px; max-height: 12px;
-            border-radius: 6px;
-            border: 1px solid rgba(0, 0, 0, 0.1);
-            padding: 0;
-            text-align: center;
-            font-weight: bold;
-        }}
-        
-        #close_button {{
-            background-color: #ff5f57;
-            color: #640a03;
-        }}
-        #close_button:hover {{
-            background-color: #ff7b76;
-        }}
-        #close_button:pressed {{
-            background-color: #bf4943;
-        }}
-        
-        #minimize_button {{
-            background-color: #ffbd2e;
-            color: #654600;
-        }}
-        #minimize_button:hover {{
-            background-color: #ffcc51;
-        }}
-        #minimize_button:pressed {{
-            background-color: #bf8e23;
-        }}
-        
-        #maximize_button {{
-            background-color: #28c941;
-            color: #0a4513;
-        }}
-        #maximize_button:hover {{
-            background-color: #54d465;
-        }}
-        #maximize_button:pressed {{
-            background-color: #1e9731;
-        }}
-        
-        #search_frame {
-            background-color: {CP["light_bg_primary"] if self.current_theme == 'light' else CP["dark_bg_secondary"]};
-            border: 1px solid {UA["border_medium"]};
-            border-radius: 6px;
-            padding: 0px;
+            image: url(:/icons/dropdown_arrow.png);
         }
-        #search_frame QLineEdit {
-             background: transparent;
-             border: none;
-             padding: 6px 8px; /* Slightly more left padding */
+        
+        QComboBox QAbstractItemView {
+            background-color: rgba(255, 255, 255, 0.95);
+            border: 1px solid rgba(208, 200, 185, 0.8);
+            color: #333333;
+            selection-background-color: rgba(196, 181, 159, 0.8);
+            selection-color: white;
         }
-        #field_indicator, #dropdown_button {
-            color: {TC["secondary_on_light"] if self.current_theme == 'light' else TC["secondary_on_dark"]};
-            background: transparent;
-            border: none;
-            padding: 6px 4px;
-            margin: 0px;
-        }
-        #field_indicator {
-            margin-right: 0px;
-            font-size: 12px;
-        }
-        #dropdown_button {
-            margin-left: 0px;
-            margin-right: 4px;
-            font-size: 10px;
-        }
-        #dropdown_button:hover {
-            color: {TC["primary_on_light"] if self.current_theme == 'light' else TC["primary_on_dark"]};
-        }
-
-        /* Mirror Panel specific styles */
-        QWidget#MirrorPanel {{
-            background-color: {CP["light_bg_secondary"] if self.current_theme == 'light' else CP["dark_bg_secondary"]};
-            border-left: 1px solid {UA["border_medium"]};
-        }}
-        QWidget#MirrorPanelContent {{
-            background-color: transparent; 
-        }}
-        QWidget#MirrorPanelContent QGroupBox {{
-            background-color: {UA["content_bg"]}; /* Match main content bg */
-            border: 1px solid {UA["border_light"]};
-            border-radius: 6px;
-            margin-top: 10px;
-            padding: 8px;
-            font-weight: 600; /* Semibold */
-            color: {TC["primary_on_light"] if self.current_theme == 'light' else TC["primary_on_dark"]};
-        }}
-        QGroupBox::title {{
-            subcontrol-origin: margin;
-            left: 10px;
-            padding: 0 5px 0 5px;
-            color: {TC["primary_on_light"] if self.current_theme == 'light' else TC["primary_on_dark"]};
-        }}
-        QWidget#MirrorPanel QListWidget {{
-            background-color: {CP["light_bg_primary"] if self.current_theme == 'light' else CP["dark_bg_tertiary"]};
-            border: 1px solid {UA["border_light"]};
-            color: {TC["primary_on_light"] if self.current_theme == 'light' else TC["primary_on_dark"]};
-            min-height: 80px;
-            border-radius: 4px;
-            font-size: 13px;
-        }}
-        QWidget#MirrorPanel QListWidget::item {{
-            color: {TC["primary_on_light"] if self.current_theme == 'light' else TC["primary_on_dark"]};
+        
+        /* Line Edit and ComboBox common styles */
+        QLineEdit, QComboBox, QSpinBox {
             padding: 5px;
-        }}
-        QWidget#MirrorPanel QListWidget::item:selected {{
-            background-color: {UA["selection_bg"]};
-            color: {UA["selection_fg"]};
-        }}
-
-        QWidget#MirrorPanelContent QPushButton.primary {{ 
-            background-color: {UA["button_primary_bg"]};
-            color: {UA["button_primary_fg"]};
-            border: none;
-            font-weight: bold; 
-        }}
-        QWidget#MirrorPanelContent QPushButton.primary:hover {{
-            background-color: {UA["button_primary_hover_bg"]};
-        }}
-        QWidget#MirrorPanel QLineEdit, QWidget#MirrorPanel QSpinBox {{
-            padding: 7px;
-            border: 1px solid {UA["border_medium"]};
+            border: 1px solid rgba(208, 200, 185, 0.8);
+            border-radius: 4px;
+            background-color: rgba(255, 255, 255, 0.85);
+            color: #333333;
+        }
+        
+        /* Splitter styling */
+        QSplitter::handle {
+            background-color: rgba(224, 216, 201, 0.7);
+        }
+        
+        /* Menu styling */
+        QMenu {
+            background-color: rgba(245, 236, 220, 0.95);
+            border: 1px solid rgba(224, 216, 201, 0.8);
             border-radius: 6px;
-            background-color: {CP["light_bg_primary"] if self.current_theme == 'light' else CP["dark_bg_secondary"]};
-            color: {TC["primary_on_light"] if self.current_theme == 'light' else TC["primary_on_dark"]};
-            font-size: 13px;
-        }}
-        QWidget#MirrorPanel QCheckBox {{
-            color: {TC["primary_on_light"] if self.current_theme == 'light' else TC["primary_on_dark"]};
-            font-size: 13px;
-            padding: 3px 0px;
-        }}
-        QWidget#MirrorPanel QScrollArea {{
-            background-color: transparent;
+            padding: 4px;
+        }
+        
+        QMenu::item {
+            padding: 4px 20px 4px 6px;
+            border-radius: 4px;
+            color: #333333;
+        }
+        
+        QMenu::item:selected {
+            background-color: rgba(232, 223, 208, 0.85);
+        }
+        
+        /* QScrollBar styling */
+        QScrollBar:vertical {
             border: none;
-        }}
-        QWidget#MirrorPanel QSplitter::handle {{
-            background-color: {UA["border_light"]};
-            height: 1px;
-        }}
-        QWidget#MirrorPanel QFrame[frameShape="4"] {{  /* HLine */
-            background-color: {UA["border_light"]};
-            max-height: 1px;
-        }}
-        
-        /* QScrollBar styling within MirrorPanel - make them slimmer */
-        QWidget#MirrorPanel QScrollBar:vertical {{
+            background: rgba(245, 236, 220, 0.4);
             width: 10px;
+            margin: 0px;
             border-radius: 5px;
-        }}
+        }
         
-        QWidget#MirrorPanel QScrollBar::handle:vertical {{
+        QScrollBar::handle:vertical {
+            background: rgba(196, 181, 159, 0.8);
             min-height: 20px;
             border-radius: 5px;
-        }}
-                
-        QWidget#MirrorPanel QScrollBar:horizontal {{
-            height: 10px;
-            border-radius: 5px;
-        }}
+        }
         
-        QWidget#MirrorPanel QScrollBar::handle:horizontal {{
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+            border: none;
+            background: none;
+            height: 0px;
+        }
+        
+        QScrollBar:horizontal {
+            border: none;
+            background: rgba(245, 236, 220, 0.4);
+            height: 10px;
+            margin: 0px;
+            border-radius: 5px;
+        }
+        
+        QScrollBar::handle:horizontal {
+            background: rgba(196, 181, 159, 0.8);
             min-width: 20px;
             border-radius: 5px;
-        }}
+        }
+        
+        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+            border: none;
+            background: none;
+            width: 0px;
+        }
         """
         self.setStyleSheet(stylesheet)
     
@@ -1714,66 +998,9 @@ class AudioMetadataEditor(QMainWindow):
                 paste_action.triggered.connect(lambda: self.paste_to_selected_cells(col))
                 menu.addAction(paste_action)
         
-        # Add separator before remove action if other actions are present
-        if menu.actions():
-            menu.addSeparator()
-            
-        # Add remove file(s) action
-        remove_action = QAction(f"Remove Selected File{'s' if len(selected_rows) > 1 else ''}", self)
-        if not selected_rows: # Should not happen if menu is shown for selected items
-            remove_action.setEnabled(False)
-        remove_action.triggered.connect(self.prompt_and_execute_remove_files)
-        menu.addAction(remove_action)
-        
         # Show the menu
         menu.exec(self.metadata_table.mapToGlobal(position))
     
-    def prompt_and_execute_remove_files(self):
-        """Prompt the user for confirmation and then execute file removal for selected files."""
-        selected_actual_indices = self.get_selected_actual_rows()
-        
-        if not selected_actual_indices:
-            QMessageBox.information(self, "No Selection", "No files selected to remove.")
-            return
-
-        num_selected = len(selected_actual_indices)
-        file_s = "file" if num_selected == 1 else "files"
-        
-        reply = QMessageBox.question(
-            self, 
-            "Confirm Removal from List", 
-            f"Are you sure you want to remove the selected {num_selected} {file_s} from the application list?\\n\\n" \
-            f"This action will NOT delete the file(s) from your computer's disk, only from the list in this application.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, 
-            QMessageBox.StandardButton.No
-        )
-        
-        if reply == QMessageBox.StandardButton.Yes:
-            file_data_to_remove = []
-            # Iterate over a copy of indices, as all_files might change if an error occurs mid-process (though unlikely with current setup)
-            for index in sorted(selected_actual_indices, reverse=True): # Sort reverse to simplify removal from all_files if done by index
-                if 0 <= index < len(self.all_files):
-                    file_path, metadata = self.all_files[index]
-                    file_data_to_remove.append((index, file_path, metadata))
-            
-            if not file_data_to_remove:
-                self.status_label.setText("No valid files found for removal.")
-                return
-
-            # The FileRemoveCommand expects data sorted by original index if it were to reinsert at original_index for undo.
-            # Since our current undo appends and re-sorts, the order fed to command init isn't super critical,
-            # but good practice to pass it consistently.
-            # We reversed for potential indexed removal, but for storing, original order is fine.
-            file_data_to_remove.sort(key=lambda x: x[0]) # Sort by original index for consistency
-
-            command = FileRemoveCommand(self, file_data_to_remove)
-            if self.undo_redo_stack.push(command):
-                # Status is updated by the command's execute method
-                pass
-            else:
-                self.status_label.setText("File removal failed or was cancelled.")
-            self.update_undo_redo_buttons()
-
     def show_batch_rename_dialog(self, selected_rows):
         """Show a dialog for batch renaming multiple files"""
         dialog = QDialog(self)
@@ -2203,43 +1430,40 @@ class AudioMetadataEditor(QMainWindow):
             # Pre-allocate rows for better performance
             self.metadata_table.setRowCount(len(self.filtered_rows))
             
-            # Create or update table items
+            # Create all table items at once
+            table_items = []
             for table_row, file_idx in enumerate(self.filtered_rows):
                 file_path, metadata = self.all_files[file_idx]
+                
+                # Get the filename from the file_path
                 filename = os.path.basename(file_path)
                 
-                # Column 0: Filename
-                item = self.metadata_table.item(table_row, 0)
-                if item:
-                    item.setText(filename)
-                else:
-                    self.metadata_table.setItem(table_row, 0, QTableWidgetItem(filename))
-
-                # Metadata columns
-                metadata_keys = ["Show", "Scene", "Take", "Category", 
-                                 "Subcategory", "Slate", "ixmlNote", "ixmlWildtrack", "ixmlCircled"]
-                for col_offset, key in enumerate(metadata_keys):
-                    col = col_offset + 1
-                    value = metadata.get(key, "")
-                    item = self.metadata_table.item(table_row, col)
-                    if item:
-                        item.setText(value)
-                    else:
-                        self.metadata_table.setItem(table_row, col, QTableWidgetItem(value))
-
-                # Column 10: File Path
-                item = self.metadata_table.item(table_row, 10)
-                if item:
-                    item.setText(file_path)
-                else:
-                    file_path_item = QTableWidgetItem(file_path)
-                    file_path_item.setFlags(file_path_item.flags() & ~Qt.ItemFlag.ItemIsEditable) # Make non-editable
-                    self.metadata_table.setItem(table_row, 10, file_path_item)
+                # Create a row of items
+                row_items = [QTableWidgetItem(filename)]
+                
+                # Add metadata fields
+                for key in ["Show", "Scene", "Take", "Category", 
+                          "Subcategory", "Slate", "ixmlNote", "ixmlWildtrack", "ixmlCircled"]:
+                    row_items.append(QTableWidgetItem(metadata.get(key, "")))
+                
+                # Add file path
+                file_path_item = QTableWidgetItem(file_path)
+                file_path_item.setFlags(file_path_item.flags() & ~Qt.ItemFlag.ItemIsEditable)  # Make non-editable
+                row_items.append(file_path_item)
+                
+                # Make filename editable - removing this line
+                # row_items[0].setFlags(row_items[0].flags() & ~Qt.ItemFlag.ItemIsEditable)
+                
+                table_items.append(row_items)
+            
+            # Add all items to the table at once
+            for row, row_items in enumerate(table_items):
+                for col, item in enumerate(row_items):
+                    self.metadata_table.setItem(row, col, item)
         
         # Re-enable updates and signals
         self.metadata_table.setUpdatesEnabled(True)
         self.metadata_table.blockSignals(False)
-        self.metadata_table.viewport().update() # Force repaint of the table viewport
         
         # Update status message
         if len(self.filtered_rows) == len(self.all_files):
@@ -2302,8 +1526,8 @@ class AudioMetadataEditor(QMainWindow):
             elif 1 <= col <= 9:  # Metadata columns
                 # Map column indices to metadata keys
                 metadata_keys = ["Show", "Scene", "Take", "Category", 
-                           "Subcategory", "Slate", "ixmlNote", "ixmlWildtrack", "ixmlCircled"]
-            
+                               "Subcategory", "Slate", "ixmlNote", "ixmlWildtrack", "ixmlCircled"]
+                
                 # Get the metadata key and old value
                 key = metadata_keys[col - 1]  # -1 to account for filename column
                 old_value = metadata.get(key, "")
@@ -2468,25 +1692,30 @@ class AudioMetadataEditor(QMainWindow):
             # Mark changes as pending
             self.changes_pending = True
     
-    def apply_filename_extraction(self, separator, mappings, selected_rows_indices=None):
+    def apply_filename_extraction(self, separator, mappings, selected_rows=None):
         """Apply filename extraction to selected files based on dialog settings"""
         count = 0
         
         # If no rows specified, don't process any
-        if selected_rows_indices is None or not selected_rows_indices:
+        if selected_rows is None or not selected_rows:
             return 0
             
         # Disconnect signals temporarily
         self.metadata_table.blockSignals(True)
         
         # Set up batch processing with progress dialog
-        progress = QProgressDialog("Extracting metadata...", "Cancel", 0, len(selected_rows_indices), self)
+        progress = QProgressDialog("Extracting metadata...", "Cancel", 0, len(selected_rows), self)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(500)  # Only show if operation takes longer than 500ms
             
-        # First, collect the necessary data for all selected files into a temporary, stable list
-        extraction_data = []
-        for idx in selected_rows_indices:
+        for i, idx in enumerate(selected_rows):
+            if progress.wasCanceled():
+                break
+                
+            progress.setValue(i)
+            progress.setLabelText(f"Processing {i+1}/{len(selected_rows)}: {os.path.basename(self.all_files[idx][0])}")
+            QApplication.processEvents()
+            
             if idx >= len(self.all_files):
                 continue
                 
@@ -2504,32 +1733,21 @@ class AudioMetadataEditor(QMainWindow):
                 print(f"  Not enough parts: have {len(parts)}, need {max_pos}")
                 continue
                 
-            extraction_data.append((file_path, metadata, parts))
-        
-        # Now, iterate over the stable extraction_data list to perform the parsing and metadata updates
-        for i, (file_path, metadata, parts) in enumerate(extraction_data):
-            if progress.wasCanceled():
-                break
-                
-            progress.setValue(i)
-            progress.setLabelText(f"Processing {i+1}/{len(selected_rows_indices)}: {os.path.basename(file_path)}")
-            QApplication.processEvents()
-            
             # Extract metadata based on mappings
             updated = False
             for field, pos in mappings:
                 try:
                     # Position is 1-based in UI, convert to 0-based for Python
-                    idx_val = int(pos) - 1 # Renamed idx to idx_val to avoid conflict with loop variable
+                    idx = int(pos) - 1
                     
-                    if idx_val >= len(parts):
-                        print(f"  Index {idx_val} out of range for parts {parts}")
+                    if idx >= len(parts):
+                        print(f"  Index {idx} out of range for parts {parts}")
                         continue
                         
-                    value = parts[idx_val]
-                    print(f"  Mapping {field} from part {idx_val+1}: '{value}'")
+                    value = parts[idx]
+                    print(f"  Mapping {field} from part {idx+1}: '{value}'")
                     
-                    if field == "Scene" and idx_val < len(parts):
+                    if field == "Scene" and idx < len(parts):
                         # Extract scene information
                         scene_part = value
                         # If scene follows format like "Sc5.14D", extract just the "5.14D" part
@@ -2542,9 +1760,13 @@ class AudioMetadataEditor(QMainWindow):
                         if letter_match:
                             letter_suffix = letter_match.group(0)
                             print(f"  Extracted letter suffix '{letter_suffix}' from Scene '{scene_part}'")
-                            # Set the Slate field, overwriting existing value if a new one is found
-                            metadata["Slate"] = letter_suffix
-                            print(f"  Set Slate to: '{metadata['Slate']}'")
+                            # Add to Slate field (preserve existing value if any)
+                            existing_slate = metadata.get("Slate", "")
+                            if existing_slate:
+                                metadata["Slate"] = existing_slate + letter_suffix
+                            else:
+                                metadata["Slate"] = letter_suffix
+                            print(f"  Added letter suffix to Slate: '{metadata['Slate']}'")
                             
                             # Optionally, you could remove the letter from the scene value
                             # scene_part = re.sub(r'[A-Za-z]+$', '', scene_part)
@@ -2552,7 +1774,7 @@ class AudioMetadataEditor(QMainWindow):
                         metadata[field] = scene_part
                         updated = True
                     
-                    elif field == "Subcategory" and idx_val < len(parts):
+                    elif field == "Subcategory" and idx < len(parts):
                         # Try to extract episode number from the filename
                         
                         # First check the scene part for a period (like in "5.14D")
@@ -2583,11 +1805,8 @@ class AudioMetadataEditor(QMainWindow):
             
             if updated:
                 count += 1
-                self.all_files[selected_rows_indices[i]] = (file_path, metadata) # Use original loop variable idx here
-                print(f"  Updated metadata for {os.path.basename(file_path)}")
-        
-        # Ensure the progress dialog is closed/completed
-        progress.setValue(len(selected_rows_indices))
+                self.all_files[i] = (file_path, metadata)
+                print(f"  Updated metadata for {filename}")
                 
         # After extraction complete, refresh the table
         self.update_table()
@@ -2644,26 +1863,6 @@ class AudioMetadataEditor(QMainWindow):
             # Hide panel
             self.main_splitter.setSizes([self.width(), 0])
             self.mirror_panel.setVisible(False)
-            
-    def toggle_dark_mode(self):
-        """Toggle between light and dark themes"""
-        if self.current_theme == 'light':
-            self.current_theme = 'dark'
-            self.dark_mode_button.setToolTip("Switch to Light Mode")
-            self.dark_mode_button.setText("🌞") # Sun icon for switching to light mode
-        else:
-            self.current_theme = 'light'
-            self.dark_mode_button.setToolTip("Switch to Dark Mode")
-            self.dark_mode_button.setText("🌙") # Moon icon for switching to dark mode
-        
-        # Apply the new theme
-        self.apply_stylesheet()
-        
-        # Update icons with the new theme colors
-        if hasattr(self, 'undo_button'):
-            self.undo_button.setIcon(self.create_undo_icon())
-        if hasattr(self, 'redo_button'):
-            self.redo_button.setIcon(self.create_redo_icon())
     
     # Property for animation (keeping for future use)
     def get_panel_position(self):
@@ -2675,18 +1874,6 @@ class AudioMetadataEditor(QMainWindow):
         
     panel_position = pyqtProperty(int, get_panel_position, set_panel_position)
 
-    def mirror_files_qcode_take_review(self, selected_rows, dest_dir, day_number, overwrite):
-        """Stub method for mirroring files for QCode Take Review."""
-        print(f"STUB: mirror_files_qcode_take_review called with dest_dir={dest_dir}, day_number={day_number}, overwrite={overwrite}, {len(selected_rows)} files selected.")
-        # TODO: Implement actual QCode Take Review mirroring logic
-        pass
-
-    def mirror_files(self, selected_rows, destination_dir, organization, overwrite):
-        """Stub method for general file mirroring."""
-        print(f"STUB: mirror_files called with destination_dir={destination_dir}, organization={organization}, overwrite={overwrite}, {len(selected_rows)} files selected.")
-        # TODO: Implement actual file mirroring logic
-        pass
-
     def set_search_field(self, field):
         """Set the current search field and update the filter"""
         self.current_search_field = field
@@ -2695,7 +1882,7 @@ class AudioMetadataEditor(QMainWindow):
     def show_field_menu(self):
         """Show a menu to select which field to search in"""
         menu = QMenu(self)
-        for field in ["All Fields", "Filename", "Scene", "Take", "Description", "Notes"]:
+        for field in ["All Fields", "Filename", "Scene", "Take", "Category", "Subcategory", "Slate", "ixmlNote", "ixmlWildtrack", "ixmlCircled"]:
             action = QAction(field, self)
             action.triggered.connect(lambda checked, f=field: self.set_search_field(f))
             if field == self.current_search_field:
@@ -2777,38 +1964,74 @@ class AudioMetadataEditor(QMainWindow):
         """Create an integrated title bar with all controls"""
         # Create title bar container
         title_bar = QWidget()
-        title_bar.setObjectName("title_bar") 
-        title_bar.setFixedHeight(48)  # Increased height to avoid button cutoff
+        title_bar.setObjectName("title_bar")
+        title_bar.setFixedHeight(44)  # Fixed height for the combined bar
+        title_bar.setStyleSheet("""
+            #title_bar {
+                background-color: rgba(245, 236, 220, 0.85);
+                border-top-left-radius: 10px;
+                border-top-right-radius: 10px;
+                border-bottom: 1px solid rgba(224, 216, 201, 0.7);
+            }
+        """)
         
-        # The title bar styling is now moved to the stylesheet in apply_stylesheet()
-        # This allows it to properly update when theme changes
-        
-        # Use horizontal layout for title bar with proper vertical alignment
+        # Use horizontal layout for title bar
         title_layout = QHBoxLayout(title_bar)
-        title_layout.setContentsMargins(10, 4, 10, 4)  # Reduced vertical padding
-        title_layout.setSpacing(8)  # Slightly reduced spacing
-        title_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        title_layout.setContentsMargins(10, 0, 10, 0)
+        title_layout.setSpacing(8)
         
         # Window control buttons in macOS style (left side)
-        close_button = QPushButton("")
+        close_button = QPushButton()
         close_button.setObjectName("close_button")
         close_button.setToolTip("Close")
         close_button.setFixedSize(12, 12)
         close_button.clicked.connect(self.close)
         
-        minimize_button = QPushButton("")
+        minimize_button = QPushButton()
         minimize_button.setObjectName("minimize_button")
         minimize_button.setToolTip("Minimize")
         minimize_button.setFixedSize(12, 12)
         minimize_button.clicked.connect(self.showMinimized)
         
-        self.maximize_button = QPushButton("")
+        self.maximize_button = QPushButton()
         self.maximize_button.setObjectName("maximize_button")
         self.maximize_button.setToolTip("Maximize")
         self.maximize_button.setFixedSize(12, 12)
         self.maximize_button.clicked.connect(self.toggleMaximized)
         
-        # Window control buttons use styling from main stylesheet
+        # Add CSS for macOS style buttons
+        close_button.setStyleSheet("""
+            #close_button {
+                background-color: #ff5f57;
+                border-radius: 6px;
+                border: none;
+            }
+            #close_button:hover {
+                background-color: #ff7b76;
+            }
+        """)
+        
+        minimize_button.setStyleSheet("""
+            #minimize_button {
+                background-color: #ffbd2e;
+                border-radius: 6px;
+                border: none;
+            }
+            #minimize_button:hover {
+                background-color: #ffcc51;
+            }
+        """)
+        
+        self.maximize_button.setStyleSheet("""
+            #maximize_button {
+                background-color: #28c941;
+                border-radius: 6px;
+                border: none;
+            }
+            #maximize_button:hover {
+                background-color: #54d465;
+            }
+        """)
         
         # Add buttons to layout in macOS order (close, minimize, maximize)
         title_layout.addWidget(close_button)
@@ -2821,14 +2044,14 @@ class AudioMetadataEditor(QMainWindow):
         # App title
         app_title = QLabel("Audio Metadata Editor")
         app_title.setObjectName("app_title")
+        app_title.setStyleSheet("font-weight: bold; font-size: 14px;")
         title_layout.addWidget(app_title)
         
         # Add a small separator
         separator1 = QFrame()
         separator1.setFrameShape(QFrame.Shape.VLine)
         separator1.setFrameShadow(QFrame.Shadow.Sunken)
-        separator1.setObjectName("title_separator")
-        # Separator styling is handled in the main stylesheet
+        separator1.setStyleSheet("background-color: rgba(224, 216, 201, 0.7); margin: 8px 4px;")
         title_layout.addWidget(separator1)
         
         # Integrated search widget with dropdown
@@ -2840,39 +2063,75 @@ class AudioMetadataEditor(QMainWindow):
         # Integrated search field with dropdown
         search_frame = QFrame()
         search_frame.setObjectName("search_frame")
-        # Search frame styling is handled in the main stylesheet
+        search_frame.setStyleSheet("""
+            #search_frame {
+                background-color: rgba(255, 255, 255, 0.85);
+                border: 1px solid rgba(224, 216, 201, 0.8);
+                border-radius: 6px;
+            }
+        """)
         
         search_frame_layout = QHBoxLayout(search_frame)
-        search_frame_layout.setContentsMargins(8, 0, 5, 0)  # Increased left padding
-        search_frame_layout.setSpacing(2)  # Added spacing between elements
+        search_frame_layout.setContentsMargins(5, 0, 5, 0)
+        search_frame_layout.setSpacing(0)
         
+        # First add the search input
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search files...")
         self.search_input.setClearButtonEnabled(True)
-        self.search_input.setMinimumWidth(200)  # Increased width
-        self.search_input.setObjectName("search_input")
-        # Search input styling is handled in the main stylesheet
+        self.search_input.setMinimumWidth(180)
+        self.search_input.setStyleSheet("""
+            QLineEdit {
+                border: none;
+                background: transparent;
+                padding: 4px;
+            }
+        """)
         self.search_input.textChanged.connect(self.on_search_changed)
         self.search_input.returnPressed.connect(self.filter_table)
         
-        # Search input first
-        search_frame_layout.addWidget(self.search_input)
+        # Create a container for the field indicator and dropdown button
+        dropdown_container = QWidget()
+        dropdown_container.setFixedWidth(60)
+        dropdown_layout = QHBoxLayout(dropdown_container)
+        dropdown_layout.setContentsMargins(0, 0, 0, 0)
+        dropdown_layout.setSpacing(0)
         
-        # Field indicator and dropdown button (inside the same frame)
+        # Field indicator and dropdown button
         field_indicator = QLabel("All")
         field_indicator.setObjectName("field_indicator")
-        field_indicator.setFixedWidth(30)  # Set fixed width for consistency
-        # Field indicator styling is handled in the main stylesheet
+        field_indicator.setStyleSheet("""
+            #field_indicator {
+                color: #666;
+                padding-right: 0px;
+            }
+        """)
         
         dropdown_button = QPushButton("▾")
         dropdown_button.setObjectName("dropdown_button")
-        dropdown_button.setFixedWidth(20)  # Reduced width to fit better
-        # Dropdown button styling is handled in the main stylesheet
+        dropdown_button.setFixedWidth(20)
+        dropdown_button.setStyleSheet("""
+            #dropdown_button {
+                border: none;
+                background: transparent;
+                color: #666;
+                padding: 0 5px 0 0;
+                text-align: center;
+                font-size: 10px;
+            }
+            #dropdown_button:hover {
+                color: #333;
+            }
+        """)
         dropdown_button.clicked.connect(self.show_field_menu)
         
-        # Add field indicator and dropdown to search frame
-        search_frame_layout.addWidget(field_indicator)
-        search_frame_layout.addWidget(dropdown_button)
+        # Add components to the dropdown container
+        dropdown_layout.addWidget(field_indicator)
+        dropdown_layout.addWidget(dropdown_button)
+        
+        # Add both components to the search frame layout in the correct order
+        search_frame_layout.addWidget(self.search_input)
+        search_frame_layout.addWidget(dropdown_container)
         
         search_layout.addWidget(search_frame)
         
@@ -2881,117 +2140,1220 @@ class AudioMetadataEditor(QMainWindow):
         self.search_field_button = dropdown_button
         self.current_search_field = "All Fields"
         
-        # Add margin before and after search container
-        title_layout.addSpacing(10)  # Add spacing before search
         title_layout.addWidget(search_container)
-        title_layout.addSpacing(10)  # Add spacing after search
         
         # Add a flex spacer to push the rest to the right
         title_layout.addStretch(1)
         
         # Action buttons
         
-        # Create a container for the action buttons to keep them aligned
-        action_container = QWidget()
-        action_container.setObjectName("action_container")
-        action_layout = QHBoxLayout(action_container)
-        action_layout.setContentsMargins(5, 0, 5, 0)
-        action_layout.setSpacing(8)
-        action_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignHCenter)
-        
         # Browse button
         self.browse_button = QPushButton()
-        self.browse_button.setObjectName("browse_button")
         self.browse_button.setIcon(self.create_folder_icon())
         self.browse_button.setToolTip("Browse for audio files (Ctrl+O)")
+        self.browse_button.setProperty("class", "icon-button")
         self.browse_button.setFixedSize(32, 32)
         self.browse_button.clicked.connect(self.browse_folder)
-        action_layout.addWidget(self.browse_button)
-
-        # Extract metadata button
-        extract_metadata_button = QPushButton("Extract")
-        extract_metadata_button.setObjectName("extract_button")
-        extract_metadata_button.setProperty("class", "secondary")
-        extract_metadata_button.setToolTip("Extract metadata from filenames")
-        extract_metadata_button.setFixedWidth(70)
-        extract_metadata_button.setFixedHeight(32)
-        extract_metadata_button.clicked.connect(self.show_extraction_dialog)
-        action_layout.addWidget(extract_metadata_button)
-
-        # Save all changes button
-        save_all_button = AnimatedPrimaryButton("Embed") # Use themed primary button
-        save_all_button.setFixedWidth(70)
-        save_all_button.setFixedHeight(32)
-        save_all_button.setToolTip("Save all pending changes (Ctrl+S)")
-        save_all_button.clicked.connect(self.save_all_changes)
-        action_layout.addWidget(save_all_button)
+        title_layout.addWidget(self.browse_button)
         
-        # Add the action container to the title layout
-        title_layout.addWidget(action_container)
-        title_layout.addSpacing(15) # Add spacing between button groups
+        # Extract button
+        self.extract_button = QPushButton("Extract")
+        self.extract_button.setToolTip("Extract metadata from filenames (Ctrl+E)")
+        self.extract_button.setProperty("class", "action-button")
+        self.extract_button.setFixedSize(70, 32)
+        self.extract_button.clicked.connect(self.show_extraction_dialog)
+        title_layout.addWidget(self.extract_button)
         
-        # Undo/Redo buttons container
-        undo_redo_container = QWidget()
-        undo_redo_container.setObjectName("undo_redo_container")
-        undo_redo_layout = QHBoxLayout(undo_redo_container)
-        undo_redo_layout.setContentsMargins(5, 0, 5, 0)
-        undo_redo_layout.setSpacing(6)
-        undo_redo_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        # CSV match button
+        self.csv_match_button = QPushButton("CSV Match")
+        self.csv_match_button.setToolTip("Match metadata from CSV file (Ctrl+M)")
+        self.csv_match_button.setProperty("class", "action-button")
+        self.csv_match_button.setFixedSize(90, 32)
+        self.csv_match_button.clicked.connect(self.show_csv_match_dialog)
+        title_layout.addWidget(self.csv_match_button)
         
-        # Undo button
+        # Save button
+        self.save_button = QPushButton("Save")
+        self.save_button.setToolTip("Save all changes (Ctrl+S)")
+        self.save_button.setProperty("class", "action-button primary")
+        self.save_button.setFixedSize(70, 32)
+        self.save_button.clicked.connect(self.save_all_changes)
+        title_layout.addWidget(self.save_button)
+        
+        # Add a separator
+        separator2 = QFrame()
+        separator2.setFrameShape(QFrame.Shape.VLine)
+        separator2.setFrameShadow(QFrame.Shadow.Sunken)
+        separator2.setStyleSheet("background-color: rgba(224, 216, 201, 0.7); margin: 8px 4px;")
+        title_layout.addWidget(separator2)
+        
+        # Add undo button
         self.undo_button = QPushButton()
-        self.undo_button.setObjectName("undo_button")
         self.undo_button.setIcon(self.create_undo_icon())
         self.undo_button.setToolTip("Undo (Ctrl+Z)")
+        self.undo_button.setProperty("class", "icon-button")
         self.undo_button.setFixedSize(32, 32)
-        self.undo_button.clicked.connect(self.undo_last_change)
-        self.undo_button.setEnabled(False)  # Initially disabled until changes are made
-        undo_redo_layout.addWidget(self.undo_button)
+        self.undo_button.clicked.connect(self.undo)
+        self.undo_button.setEnabled(False)  # Initially disabled
+        title_layout.addWidget(self.undo_button)
         
-        # Redo button
+        # Add redo button
         self.redo_button = QPushButton()
-        self.redo_button.setObjectName("redo_button")
         self.redo_button.setIcon(self.create_redo_icon())
-        self.redo_button.setToolTip("Redo (Ctrl+Y)")
+        self.redo_button.setToolTip("Redo (Ctrl+Shift+Z)")
+        self.redo_button.setProperty("class", "icon-button")
         self.redo_button.setFixedSize(32, 32)
-        self.redo_button.clicked.connect(self.redo_last_change)
-        self.redo_button.setEnabled(False)  # Initially disabled until an undo is performed
-        undo_redo_layout.addWidget(self.redo_button)
+        self.redo_button.clicked.connect(self.redo)
+        self.redo_button.setEnabled(False)  # Initially disabled
+        title_layout.addWidget(self.redo_button)
         
-        title_layout.addWidget(undo_redo_container)
-        title_layout.addSpacing(12)
+        # Sidebar toggle button
+        self.sidebar_toggle = QPushButton()
+        self.sidebar_toggle.setIcon(self.create_sidebar_icon())
+        self.sidebar_toggle.setToolTip("Toggle Mirror Panel (Ctrl+T)")
+        self.sidebar_toggle.setProperty("class", "icon-button")
+        self.sidebar_toggle.setFixedSize(32, 32)
+        self.sidebar_toggle.clicked.connect(self.toggle_mirror_panel)
+        title_layout.addWidget(self.sidebar_toggle)
         
-        # Theme/View buttons container
-        view_container = QWidget()
-        view_container.setObjectName("view_container")
-        view_layout = QHBoxLayout(view_container)
-        view_layout.setContentsMargins(5, 0, 5, 0)
-        view_layout.setSpacing(8)
-        view_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        
-        # Dark mode toggle button
-        self.dark_mode_button = QPushButton("🌙")  # Moon icon for dark mode
-        self.dark_mode_button.setObjectName("dark_mode_button")
-        self.dark_mode_button.setToolTip("Switch to Dark Mode")
-        self.dark_mode_button.setFixedSize(32, 32)
-        self.dark_mode_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.dark_mode_button.clicked.connect(self.toggle_dark_mode)
-        view_layout.addWidget(self.dark_mode_button)
-        
-        # Mirror panel toggle button (moved to be last)
-        toggle_mirror_panel_button = QPushButton()
-        toggle_mirror_panel_button.setObjectName("mirror_panel_button")
-        toggle_mirror_panel_button.setIcon(self.create_sidebar_icon())
-        toggle_mirror_panel_button.setToolTip("Toggle mirror panel (Ctrl+M)")
-        toggle_mirror_panel_button.setFixedSize(32, 32)
-        toggle_mirror_panel_button.clicked.connect(self.toggle_mirror_panel)
-        view_layout.addWidget(toggle_mirror_panel_button)
-        
-        title_layout.addWidget(view_container)
-        title_layout.addSpacing(5)  # Add spacing at the end
-        
-        # Add the title bar to the main layout
+        # Add title bar to main layout
         main_layout.addWidget(title_bar)
+    
+    def show_csv_match_dialog(self):
+        """Show dialog to match metadata from CSV file"""
+        if not self.all_files:
+            QMessageBox.warning(self, "No Files Loaded", "Please load WAV files first.")
+            return
+            
+        wizard = CSVMatchWizard(self)
+        if wizard.exec() == QDialog.DialogCode.Accepted:
+            # Get matched characters
+            character_matches = wizard.character_matches
+            
+            # Get field mappings
+            field_mappings = wizard.get_field_mappings()
+            
+            # Get matching columns
+            character_column = wizard.character_column
+            scene_column = wizard.scene_column
+            take_column = wizard.take_column
+            
+            # Match and update metadata
+            updated_count = self.apply_csv_matches(
+                wizard.csv_data,
+                wizard.csv_headers,
+                character_matches,
+                character_column,
+                scene_column,
+                take_column,
+                field_mappings
+            )
+            
+            # Update table with matched metadata
+            self.update_table()
+            self.status_label.setText(f"Updated {updated_count} files with CSV metadata")
+            
+            # Mark changes as pending
+            self.changes_pending = True
+
+    def apply_csv_matches(self, csv_data, csv_headers, character_matches, character_column, scene_column, take_column, field_mappings):
+        """Apply CSV matches to audio files
+        
+        Args:
+            csv_data: List of csv rows
+            csv_headers: List of csv column headers
+            character_matches: Dict mapping audio characters to csv characters
+            character_column: CSV column name for character matching
+            scene_column: CSV column name for scene matching
+            take_column: CSV column name for take matching
+            field_mappings: Dict mapping CSV field names to audio metadata fields
+        """
+        # Get column indices
+        char_col_idx = csv_headers.index(character_column)
+        scene_col_idx = csv_headers.index(scene_column)
+        take_col_idx = csv_headers.index(take_column)
+        
+        # Create a lookup dictionary for CSV rows by character, scene, and take
+        csv_lookup = {}
+        for row in csv_data:
+            if len(row) <= max(char_col_idx, scene_col_idx, take_col_idx):
+                continue
+                
+            char = row[char_col_idx]
+            scene = row[scene_col_idx]
+            take = row[take_col_idx]
+            
+            # Create a lookup key
+            key = (char, scene, take)
+            csv_lookup[key] = row
+        
+        # Count of updated files
+        updated_count = 0
+        
+        # Match and update audio file metadata
+        for i, (file_path, metadata) in enumerate(self.all_files):
+            # Get audio file character, scene, and take
+            audio_char = metadata.get("Category", "")
+            audio_scene = metadata.get("Scene", "")
+            audio_take = metadata.get("Take", "")
+            
+            # Skip if missing any required field
+            if not audio_char or not audio_scene or not audio_take:
+                continue
+                
+            # Skip if character not matched
+            if audio_char not in character_matches:
+                continue
+                
+            # Get matched CSV character
+            csv_char = character_matches[audio_char]
+            
+            # Try to find matching CSV row
+            key = (csv_char, audio_scene, audio_take)
+            if key in csv_lookup:
+                # Get the matching CSV row
+                csv_row = csv_lookup[key]
+                
+                # Update metadata with mapped fields
+                updated = False
+                for csv_field, target_field in field_mappings.items():
+                    if csv_field in csv_headers:
+                        field_idx = csv_headers.index(csv_field)
+                        if field_idx < len(csv_row) and csv_row[field_idx]:
+                            # Map CSV field to the specified audio metadata field
+                            metadata[target_field] = csv_row[field_idx]
+                            updated = True
+                
+                if updated:
+                    # Update the all_files list with the new metadata
+                    self.all_files[i] = (file_path, metadata)
+                    updated_count += 1
+        
+        return updated_count
+
+    def undo(self):
+        """Undo the last operation"""
+        if self.undo_redo_stack.undo():
+            self.status_label.setText(f"Undo successful")
+            self.update_undo_redo_buttons()
+    
+    def redo(self):
+        """Redo the last undone operation"""
+        if self.undo_redo_stack.redo():
+            self.status_label.setText(f"Redo successful")
+            self.update_undo_redo_buttons()
+    
+    def update_undo_redo_buttons(self):
+        """Update the state of undo/redo buttons based on stack state"""
+        # Enable or disable the undo button
+        can_undo = self.undo_redo_stack.can_undo()
+        self.undo_button.setEnabled(can_undo)
+        
+        # Set a more descriptive tooltip if an undo command is available
+        if can_undo:
+            command = self.undo_redo_stack.command_to_undo()
+            if command:
+                self.undo_button.setToolTip(f"Undo {command.description} (Ctrl+Z)")
+            else:
+                self.undo_button.setToolTip("Undo (Ctrl+Z)")
+        else:
+            self.undo_button.setToolTip("Undo (Ctrl+Z) - Nothing to undo")
+        
+        # Enable or disable the redo button
+        can_redo = self.undo_redo_stack.can_redo()
+        self.redo_button.setEnabled(can_redo)
+        
+        # Set a more descriptive tooltip if a redo command is available
+        if can_redo:
+            command = self.undo_redo_stack.command_to_redo()
+            if command:
+                self.redo_button.setToolTip(f"Redo {command.description} (Ctrl+Shift+Z)")
+            else:
+                self.redo_button.setToolTip("Redo (Ctrl+Shift+Z)")
+        else:
+            self.redo_button.setToolTip("Redo (Ctrl+Shift+Z) - Nothing to redo")
+    
+    def create_undo_icon(self):
+        """Create an undo icon"""
+        # SVG icon for undo
+        svg_content = """
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M3 10H13C15.7614 10 18 12.2386 18 15V15C18 17.7614 15.7614 20 13 20H10" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M7 6L3 10L7 14" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        """
+        
+        # Create a QPixmap with transparent background
+        icon_size = 24
+        pixmap = QPixmap(icon_size, icon_size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        
+        # Create a painter for the pixmap
+        painter = QPainter(pixmap)
+        
+        # Load the SVG content
+        svg_renderer = QSvgRenderer(bytearray(svg_content, encoding='utf-8'))
+        
+        # Render the SVG onto the pixmap
+        svg_renderer.render(painter)
+        
+        # Finish painting
+        painter.end()
+        
+        # Return QIcon instead of QPixmap
+        return QIcon(pixmap)
+    
+    def create_redo_icon(self):
+        """Create a redo icon"""
+        # SVG icon for redo
+        svg_content = """
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M21 10H11C8.23858 10 6 12.2386 6 15V15C6 17.7614 8.23858 20 11 20H14" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M17 6L21 10L17 14" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        """
+        
+        # Create a QPixmap with transparent background
+        icon_size = 24
+        pixmap = QPixmap(icon_size, icon_size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        
+        # Create a painter for the pixmap
+        painter = QPainter(pixmap)
+        
+        # Load the SVG content
+        svg_renderer = QSvgRenderer(bytearray(svg_content, encoding='utf-8'))
+        
+        # Render the SVG onto the pixmap
+        svg_renderer.render(painter)
+        
+        # Finish painting
+        painter.end()
+        
+        # Return QIcon instead of QPixmap
+        return QIcon(pixmap)
+
+    def setup_shortcuts(self):
+        """Set up keyboard shortcuts for the application"""
+        from PyQt6.QtGui import QKeySequence, QShortcut
+        
+        # Browse shortcut (Ctrl+O)
+        browse_shortcut = QShortcut(QKeySequence("Ctrl+O"), self)
+        browse_shortcut.activated.connect(self.browse_folder)
+        
+        # Save shortcut (Ctrl+S)
+        save_shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
+        save_shortcut.activated.connect(self.save_all_changes)
+        
+        # Extract shortcut (Ctrl+E)
+        extract_shortcut = QShortcut(QKeySequence("Ctrl+E"), self)
+        extract_shortcut.activated.connect(self.show_extraction_dialog)
+        
+        # CSV Match shortcut (Ctrl+M)
+        csv_match_shortcut = QShortcut(QKeySequence("Ctrl+M"), self)
+        csv_match_shortcut.activated.connect(self.show_csv_match_dialog)
+        
+        # Toggle panel shortcut (Ctrl+T)
+        toggle_panel_shortcut = QShortcut(QKeySequence("Ctrl+T"), self)
+        toggle_panel_shortcut.activated.connect(self.toggle_mirror_panel)
+        
+        # Undo shortcut (Ctrl+Z)
+        undo_shortcut = QShortcut(QKeySequence("Ctrl+Z"), self)
+        undo_shortcut.activated.connect(self.undo)
+        
+        # Redo shortcut (Ctrl+Shift+Z or Ctrl+Y)
+        redo_shortcut_1 = QShortcut(QKeySequence("Ctrl+Shift+Z"), self)
+        redo_shortcut_1.activated.connect(self.redo)
+        
+        redo_shortcut_2 = QShortcut(QKeySequence("Ctrl+Y"), self)
+        redo_shortcut_2.activated.connect(self.redo)
+
+    def select_search_field(self, field):
+        """Set the field to search in"""
+        self.current_search_field = field
+        
+        # Update the field indicator label
+        display_text = field if field != "All Fields" else "All"
+        self.field_indicator.setText(display_text)
+        
+        # Apply current filter
+        self.filter_table()
+
+
+class FilenameExtractorDialog(QDialog):
+    """Dialog for configuring filename metadata extraction"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Extract Metadata from Filename")
+        # Remove fixed size to allow resize and make dialog smaller
+        self.resize(480, 380)
+        
+        # Store the mappings of fields to positions
+        self.mappings = []
+        self.separator = "_"  # Default separator
+        
+        # Create a more compact, efficient layout
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+        
+        # Header with explanation - simplified
+        header_layout = QHBoxLayout()
+        header = QLabel("Extract Metadata")
+        header.setStyleSheet("font-size: 16px; font-weight: 500;")
+        header_layout.addWidget(header)
+        header_layout.addStretch()
+        layout.addLayout(header_layout)
+        
+        # Example pattern - more compact
+        self.example_label = QLabel("Example: PR2_Allen_Sc5.14D_01 → Show/Category/Scene/Take")
+        self.example_label.setStyleSheet("font-style: italic; color: #666; font-size: 12px;")
+        layout.addWidget(self.example_label)
+        
+        # Separator selection - more compact
+        separator_layout = QHBoxLayout()
+        separator_layout.setSpacing(8)
+        
+        separator_label = QLabel("Separator:")
+        separator_label.setFixedWidth(70)
+        separator_layout.addWidget(separator_label)
+        
+        # Separator input
+        self.separator_input = QLineEdit("_")
+        self.separator_input.setFixedWidth(40)
+        separator_layout.addWidget(self.separator_input)
+        
+        # Preset button
+        preset_button = QPushButton("Use Common Pattern")
+        preset_button.setProperty("class", "mac-button")
+        preset_button.clicked.connect(self.preset_common_pattern)
+        separator_layout.addWidget(preset_button)
+        
+        separator_layout.addStretch()
+        layout.addLayout(separator_layout)
+        
+        # Mapping rules section heading
+        mapping_label = QLabel("Mapping Rules:")
+        mapping_label.setStyleSheet("font-weight: 500; margin-top: 8px;")
+        layout.addWidget(mapping_label)
+        
+        # Mapping grid - more efficient layout
+        mapping_container = QWidget()
+        mapping_grid = QGridLayout(mapping_container)
+        mapping_grid.setContentsMargins(0, 0, 0, 0)
+        mapping_grid.setSpacing(8)
+        mapping_grid.setHorizontalSpacing(10)
+        
+        # Column headers
+        mapping_grid.addWidget(QLabel("Item"), 0, 0)
+        mapping_grid.addWidget(QLabel("Position"), 0, 1)
+        mapping_grid.addWidget(QLabel("Field"), 0, 2)
+        
+        # Add mapping rows (up to 5 initially)
+        self.mapping_layouts = []
+        for i in range(5):
+            # Position spinbox
+            position = QSpinBox()
+            position.setMinimum(1)
+            position.setMaximum(10)
+            position.setValue(i+1)
+            position.setFixedWidth(50)
+            
+            # Target field dropdown
+            target_field = QComboBox()
+            target_field.addItems(["Show", "Category", "Subcategory", "Scene", "Take"])
+            target_field.setFixedWidth(130)
+            
+            # Default mapping (will be overridden by preset_common_pattern)
+            if i == 0:
+                target_field.setCurrentText("Show")
+            elif i == 1:
+                target_field.setCurrentText("Category")
+            elif i == 2:
+                target_field.setCurrentText("Scene")
+            elif i == 3:
+                target_field.setCurrentText("Take")
+            elif i == 4:
+                target_field.setCurrentText("Subcategory")
+            
+            # Add to grid layout
+            mapping_grid.addWidget(QLabel(f"#{i+1}"), i+1, 0)
+            mapping_grid.addWidget(position, i+1, 1)
+            mapping_grid.addWidget(target_field, i+1, 2)
+            
+            self.mapping_layouts.append((position, target_field))
+        
+        layout.addWidget(mapping_container)
+        layout.addStretch()
+        
+        # Buttons in a nicer layout
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        
+        cancel_button = QPushButton("Cancel")
+        cancel_button.setFixedWidth(80)
+        cancel_button.setProperty("class", "mac-button")
+        cancel_button.clicked.connect(self.reject)
+        button_layout.addWidget(cancel_button)
+        
+        apply_button = QPushButton("Apply")
+        apply_button.setFixedWidth(80)
+        apply_button.setProperty("class", "mac-button primary")
+        apply_button.setStyleSheet(".mac-button.primary { background-color: #007AFF; color: white; }")
+        apply_button.clicked.connect(self.accept)
+        button_layout.addWidget(apply_button)
+        
+        layout.addLayout(button_layout)
+    
+    def preset_common_pattern(self):
+        """Set a preset for the common pattern PR2_Allen_Sc5.14D_01"""
+        # Update the example label for clarity
+        self.example_label.setText("Example: PR2_Allen_Sc5.14D_01 → Show, Character, Scene (with Sc prefix), Take")
+        
+        # Set separator
+        self.separator_input.setText("_")
+        
+        # Configure mappings for the standard pattern
+        # 1. Show (PR2)
+        # 2. Category/Character (Allen)
+        # 3. Scene with "Sc" prefix (Sc5.14D) - code will strip the "Sc"
+        # 4. Take (01)
+        # (Subcategory will be extracted from scene number)
+        
+        # Set up the mapping controls
+        for i, (position, field) in enumerate(self.mapping_layouts):
+            if i == 0:
+                position.setValue(1)
+                field.setCurrentText("Show")
+            elif i == 1:
+                position.setValue(2)
+                field.setCurrentText("Category")
+            elif i == 2:
+                position.setValue(3)
+                field.setCurrentText("Scene")
+            elif i == 3:
+                position.setValue(4)
+                field.setCurrentText("Take")
+            elif i == 4:
+                # This will be auto-extracted from Scene
+                position.setValue(1)  # Doesn't matter - will be extracted from Scene
+                field.setCurrentText("Subcategory")
+
+    def accept(self):
+        """When user clicks Apply, gather all the settings"""
+        self.separator = self.separator_input.text()
+        if not self.separator:
+            self.separator = "_"  # Default if empty
+        
+        # Gather the mappings
+        self.mappings = []
+        for position, target_field in self.mapping_layouts:
+            field = target_field.currentText()
+            pos = position.value()
+            self.mappings.append((field, pos))
+        
+        super().accept()
+
+
+class MirrorFilesDialog(QDialog):
+    """Dialog for configuring file mirroring options"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Mirror Files to New Location")
+        self.resize(550, 400)
+        
+        # Initialize variables
+        self.destination_dir = ""
+        self.organization = []
+        
+        # Create layout
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+        
+        # Set dialog background to light color
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #F5F5F7;
+            }
+            QLabel {
+                color: #333333;
+            }
+            QGroupBox {
+                background-color: white;
+                border: 1px solid #E0E0E0;
+                border-radius: 4px;
+                margin-top: 12px;
+                font-weight: bold;
+                color: #333333;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px 0 5px;
+                color: #333333;
+            }
+            QListWidget {
+                background-color: white;
+                border: 1px solid #E0E0E0;
+                color: #333333;
+            }
+            QPushButton {
+                background-color: #E9E9E9;
+                color: #333333;
+                border: 1px solid #D0D0D0;
+                border-radius: 4px;
+                padding: 5px 10px;
+                min-height: 20px;
+            }
+            QPushButton:hover {
+                background-color: #D0D0D0;
+            }
+            QPushButton.primary {
+                background-color: #007AFF;
+                color: white;
+                border: none;
+            }
+            QPushButton.primary:hover {
+                background-color: #0066CC;
+            }
+            QLineEdit, QSpinBox {
+                padding: 5px;
+                border: 1px solid #D0D0D0;
+                border-radius: 4px;
+                background-color: white;
+                color: #333333;
+            }
+            QCheckBox {
+                color: #333333;
+            }
+        """)
+        
+        # Header with explanation
+        header = QLabel("Mirror Files")
+        header.setStyleSheet("font-size: 18px; font-weight: 600; color: #333333; margin-bottom: 5px;")
+        layout.addWidget(header)
+        
+        info_label = QLabel("Copy selected files to a new location with organized folder structure.")
+        info_label.setStyleSheet("font-style: italic; color: #666666; font-size: 13px; margin-bottom: 10px;")
+        layout.addWidget(info_label)
+        
+        # Destination directory selection
+        dest_group = QGroupBox("Destination Folder")
+        dest_layout = QHBoxLayout(dest_group)
+        dest_layout.setContentsMargins(12, 12, 12, 12)
+        
+        self.dest_input = QLineEdit()
+        self.dest_input.setPlaceholderText("Select destination folder...")
+        dest_layout.addWidget(self.dest_input)
+        
+        dest_button = QPushButton("Browse...")
+        dest_button.setFixedWidth(100)
+        dest_button.clicked.connect(self.browse_destination)
+        dest_layout.addWidget(dest_button)
+        
+        layout.addWidget(dest_group)
+        
+        # Folder organization section - main content area
+        org_group = QGroupBox("Folder Organization")
+        org_main_layout = QVBoxLayout(org_group)
+        org_main_layout.setContentsMargins(12, 16, 12, 12)
+        
+        # Explanation for this section
+        org_info = QLabel("Select fields to create an organized folder structure. Order determines hierarchy.")
+        org_info.setStyleSheet("font-style: italic; color: #666666; font-size: 12px; margin-bottom: 8px;")
+        org_main_layout.addWidget(org_info)
+        
+        # Split into two columns - available fields and selected fields
+        org_layout = QHBoxLayout()
+        
+        # Available fields list
+        available_group = QGroupBox("Available Fields")
+        available_layout = QVBoxLayout(available_group)
+        available_layout.setContentsMargins(10, 20, 10, 10)
+        
+        self.available_list = QListWidget()
+        self.available_list.addItems(["Show", "Scene", "Take", "Category", "Subcategory", "Slate", "ixmlNote", "ixmlWildtrack", "ixmlCircled"])
+        self.available_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        available_layout.addWidget(self.available_list)
+        
+        org_layout.addWidget(available_group)
+        
+        # Buttons for moving fields between lists
+        button_layout = QVBoxLayout()
+        button_layout.addStretch()
+        
+        add_button = QPushButton("→")
+        add_button.setFixedSize(40, 30)
+        add_button.clicked.connect(self.add_fields)
+        button_layout.addWidget(add_button)
+        
+        remove_button = QPushButton("←")
+        remove_button.setFixedSize(40, 30)
+        remove_button.clicked.connect(self.remove_fields)
+        button_layout.addWidget(remove_button)
+        
+        button_layout.addSpacing(20)
+        
+        up_button = QPushButton("↑")
+        up_button.setFixedSize(40, 30)
+        up_button.clicked.connect(self.move_field_up)
+        button_layout.addWidget(up_button)
+        
+        down_button = QPushButton("↓")
+        down_button.setFixedSize(40, 30)
+        down_button.clicked.connect(self.move_field_down)
+        button_layout.addWidget(down_button)
+        
+        button_layout.addStretch()
+        org_layout.addLayout(button_layout)
+        
+        # Selected fields list
+        selected_group = QGroupBox("Selected Order (Top to Bottom)")
+        selected_layout = QVBoxLayout(selected_group)
+        selected_layout.setContentsMargins(10, 20, 10, 10)
+        
+        self.selected_list = QListWidget()
+        self.selected_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        selected_layout.addWidget(self.selected_list)
+        
+        org_layout.addWidget(selected_group)
+        
+        org_main_layout.addLayout(org_layout)
+        
+        # Preview section
+        preview_group = QGroupBox("Preview")
+        preview_layout = QVBoxLayout(preview_group)
+        preview_layout.setContentsMargins(10, 20, 10, 10)
+        
+        self.example_text = QLabel("Select fields to see example folder structure")
+        self.example_text.setStyleSheet("font-family: monospace; color: #333333; background-color: #EAEAEA; padding: 8px; border-radius: 4px;")
+        self.example_text.setWordWrap(True)
+        preview_layout.addWidget(self.example_text)
+        
+        org_main_layout.addWidget(preview_group)
+        
+        # Options
+        options_layout = QHBoxLayout()
+        
+        self.overwrite_checkbox = QCheckBox("Overwrite existing files")
+        self.overwrite_checkbox.setStyleSheet("color: #333333;")
+        options_layout.addWidget(self.overwrite_checkbox)
+        
+        org_main_layout.addLayout(options_layout)
+        
+        layout.addWidget(org_group)
+        
+        # Connect signals for preview updates
+        self.selected_list.model().rowsInserted.connect(self.update_preview)
+        self.selected_list.model().rowsRemoved.connect(self.update_preview)
+        self.selected_list.model().layoutChanged.connect(self.update_preview)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        
+        cancel_button = QPushButton("Cancel")
+        cancel_button.setFixedWidth(90)
+        cancel_button.clicked.connect(self.reject)
+        button_layout.addWidget(cancel_button)
+        
+        mirror_button = QPushButton("Mirror")
+        mirror_button.setFixedWidth(90)
+        mirror_button.setProperty("class", "primary")
+        mirror_button.clicked.connect(self.accept)
+        button_layout.addWidget(mirror_button)
+        
+        layout.addLayout(button_layout)
+    
+    def browse_destination(self):
+        """Browse for destination directory"""
+        folder_path = QFileDialog.getExistingDirectory(self, "Select Destination Folder")
+        if folder_path:
+            self.dest_input.setText(folder_path)
+            self.destination_dir = folder_path
+    
+    def add_fields(self):
+        """Add selected fields from available to selected"""
+        for item in self.available_list.selectedItems():
+            # Create a new item to add to selected list
+            new_item = item.text()
+            self.selected_list.addItem(new_item)
+            
+            # Remove from available list
+            self.available_list.takeItem(self.available_list.row(item))
+    
+    def remove_fields(self):
+        """Remove selected fields from selected to available"""
+        for item in self.selected_list.selectedItems():
+            # Create a new item to add back to available list
+            new_item = item.text()
+            self.available_list.addItem(new_item)
+            
+            # Remove from selected list
+            self.selected_list.takeItem(self.selected_list.row(item))
+    
+    def move_field_up(self):
+        """Move selected field up in the list"""
+        current_row = self.selected_list.currentRow()
+        if current_row > 0:
+            current_item = self.selected_list.takeItem(current_row)
+            self.selected_list.insertItem(current_row - 1, current_item)
+            self.selected_list.setCurrentRow(current_row - 1)
+    
+    def move_field_down(self):
+        """Move selected field down in the list"""
+        current_row = self.selected_list.currentRow()
+        if current_row < self.selected_list.count() - 1:
+            current_item = self.selected_list.takeItem(current_row)
+            self.selected_list.insertItem(current_row + 1, current_item)
+            self.selected_list.setCurrentRow(current_row + 1)
+    
+    def update_preview(self):
+        """Update the preview of folder structure"""
+        if self.selected_list.count() == 0:
+            self.example_text.setText("Select fields to see example folder structure")
+            return
+            
+        # Build example structure
+        structure = "destination/"
+        for i in range(self.selected_list.count()):
+            field = self.selected_list.item(i).text()
+            structure += f"<{field}>/"
+            
+        # Add example values for clearer visualization
+        example = structure.replace("<Show>", "<Show: PR2>")
+        example = example.replace("<Scene>", "<Scene: 2.14B>")
+        example = example.replace("<Take>", "<Take: 03>")
+        example = example.replace("<Category>", "<Category: Andre>")
+        example = example.replace("<Subcategory>", "<Subcategory: 2>")
+        
+        self.example_text.setText(example)
+    
+    def accept(self):
+        """When user clicks Mirror, gather all the settings"""
+        self.destination_dir = self.dest_input.text()
+        if not self.destination_dir:
+            QMessageBox.warning(self, "No Destination", "Please select a destination folder.")
+            return
+            
+        # Gather the selected fields in order
+        self.organization = []
+        for i in range(self.selected_list.count()):
+            self.organization.append(self.selected_list.item(i).text())
+            
+        if not self.organization:
+            QMessageBox.warning(self, "No Organization", "Please select at least one field for folder organization.")
+            return
+            
+        overwrite = self.overwrite_checkbox.isChecked()
+        
+        # Call the parent's mirror method
+        self.parent.mirror_files(self.selected_rows, self.destination_dir, self.organization, overwrite)
+
+
+class MirrorPanel(QWidget):
+    """Side panel for configuring and executing file mirroring options"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent = parent
+        self.selected_rows = []
+        self.destination_dir = ""
+        self.organization = []
+        
+        # Set the object name for styling
+        self.setObjectName("MirrorPanel")
+        
+        # Setup UI
+        self.setup_ui()
+    
+    def setup_ui(self):
+        # Create main layout
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        
+        # Create scroll area for content
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        
+        # Create content widget to hold all panel elements
+        content_widget = QWidget()
+        content_widget.setObjectName("MirrorPanelContent")
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setContentsMargins(16, 16, 16, 16)
+        content_layout.setSpacing(12)
+        
+        # Set panel styling
+        self.setStyleSheet("""
+            QWidget#MirrorPanel {
+                background-color: rgba(245, 236, 220, 0.75);
+                border-left: 1px solid rgba(224, 216, 201, 0.7);
+            }
+            QWidget#MirrorPanelContent {
+                background-color: rgba(245, 236, 220, 0.5);
+            }
+            QLabel {
+                color: #333333;
+            }
+            QGroupBox {
+                background-color: rgba(245, 236, 220, 0.6);
+                border: 1px solid rgba(224, 216, 201, 0.7);
+                border-radius: 4px;
+                margin-top: 12px;
+                font-weight: bold;
+                color: #333333;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px 0 5px;
+                color: #333333;
+            }
+            QListWidget {
+                background-color: rgba(255, 255, 255, 0.8);
+                border: 1px solid rgba(224, 216, 201, 0.7);
+                color: #333333;
+                min-height: 80px;
+            }
+            QListWidget::item {
+                color: #333333;
+                padding: 4px;
+            }
+            QListWidget::item:selected {
+                background-color: rgba(232, 223, 208, 0.7);
+                color: #333333;
+            }
+            QPushButton {
+                background-color: rgba(245, 236, 220, 0.6);
+                color: #333333;
+                border: 1px solid rgba(224, 216, 201, 0.7);
+                border-radius: 4px;
+                padding: 5px 10px;
+                min-height: 20px;
+            }
+            QPushButton:hover {
+                background-color: rgba(232, 223, 208, 0.8);
+            }
+            QPushButton.primary {
+                background-color: rgba(196, 181, 159, 0.85);
+                color: white;
+                border: none;
+            }
+            QPushButton.primary:hover {
+                background-color: rgba(181, 167, 144, 0.95);
+            }
+            QLineEdit, QSpinBox {
+                padding: 5px;
+                border: 1px solid rgba(224, 216, 201, 0.7);
+                border-radius: 4px;
+                background-color: rgba(255, 255, 255, 0.8);
+                color: #333333;
+            }
+            QCheckBox {
+                color: #333333;
+            }
+            QScrollArea {
+                background-color: transparent;
+                border: none;
+            }
+            QSplitter::handle {
+                background-color: rgba(224, 216, 201, 0.5);
+                height: 1px;
+            }
+            QFrame[frameShape="4"] {  /* HLine */
+                background-color: rgba(224, 216, 201, 0.5);
+                max-height: 1px;
+            }
+            
+            /* QScrollBar styling */
+            QScrollBar:vertical {
+                border: none;
+                background: rgba(245, 236, 220, 0.3);
+                width: 8px;
+                margin: 0px;
+                border-radius: 4px;
+            }
+            
+            QScrollBar::handle:vertical {
+                background: rgba(196, 181, 159, 0.7);
+                min-height: 20px;
+                border-radius: 4px;
+            }
+            
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                border: none;
+                background: none;
+                height: 0px;
+            }
+            
+            QScrollBar:horizontal {
+                border: none;
+                background: rgba(245, 236, 220, 0.3);
+                height: 8px;
+                margin: 0px;
+                border-radius: 4px;
+            }
+            
+            QScrollBar::handle:horizontal {
+                background: rgba(196, 181, 159, 0.7);
+                min-width: 20px;
+                border-radius: 4px;
+            }
+            
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                border: none;
+                background: none;
+                width: 0px;
+            }
+        """)
+        
+        # Header section
+        header_container = QWidget()
+        header_layout = QVBoxLayout(header_container)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(4)
+        
+        header = QLabel("Mirror Files")
+        header.setStyleSheet("font-size: 18px; font-weight: 600; color: #333333; margin-bottom: 5px;")
+        header_layout.addWidget(header)
+        
+        info_label = QLabel("Copy selected files to a new location with organized folder structure.")
+        info_label.setStyleSheet("font-style: italic; color: #666666; font-size: 13px; margin-bottom: 10px;")
+        info_label.setWordWrap(True)
+        header_layout.addWidget(info_label)
+        
+        # File count label
+        self.file_count_label = QLabel("No files selected. Select files in the main panel.")
+        self.file_count_label.setStyleSheet("color: #FF3B30; font-weight: bold; font-style: italic;")
+        header_layout.addWidget(self.file_count_label)
+        
+        content_layout.addWidget(header_container)
+        
+        # Destination directory selection - simplified
+        dest_container = QWidget()
+        dest_container.setStyleSheet("background-color: rgba(245, 236, 220, 0.5);")
+        dest_layout = QVBoxLayout(dest_container)
+        dest_layout.setContentsMargins(0, 0, 0, 0)
+        dest_layout.setSpacing(8)
+        
+        dest_label = QLabel("Destination Folder:")
+        dest_label.setStyleSheet("font-weight: bold; color: #333333;")
+        dest_layout.addWidget(dest_label)
+        
+        dest_input_layout = QHBoxLayout()
+        dest_input_layout.setContentsMargins(0, 0, 0, 0)
+        dest_input_layout.setSpacing(8)
+        
+        self.dest_input = QLineEdit()
+        self.dest_input.setPlaceholderText("Select destination folder...")
+        dest_input_layout.addWidget(self.dest_input)
+        
+        dest_button = QPushButton("Browse...")
+        dest_button.setMaximumWidth(80)
+        dest_button.clicked.connect(self.browse_destination)
+        dest_input_layout.addWidget(dest_button)
+        
+        dest_layout.addLayout(dest_input_layout)
+        content_layout.addWidget(dest_container)
+        
+        # Add separator
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        content_layout.addWidget(separator)
+        
+        # QCODE Take Review section - simplified
+        qcode_container = QWidget()
+        qcode_container.setStyleSheet("background-color: rgba(245, 236, 220, 0.5);")
+        qcode_layout = QVBoxLayout(qcode_container)
+        qcode_layout.setContentsMargins(0, 0, 0, 0)
+        qcode_layout.setSpacing(8)
+        
+        qcode_label = QLabel("QCODE Take Review")
+        qcode_label.setStyleSheet("font-weight: bold; font-size: 14px; color: #333333;")
+        qcode_layout.addWidget(qcode_label)
+        
+        qcode_info = QLabel("Mirror files in QCODE Take Review format with two copies:\n1. By Episode/Character/Episode/Scene\n2. Day X/Character")
+        qcode_info.setStyleSheet("font-style: italic; color: #666666; font-size: 12px;")
+        qcode_info.setWordWrap(True)
+        qcode_layout.addWidget(qcode_info)
+        
+        # Day number input
+        day_layout = QHBoxLayout()
+        day_layout.setContentsMargins(0, 0, 0, 0)
+        
+        day_label = QLabel("Day Number:")
+        day_label.setStyleSheet("color: #333333;")
+        day_label.setFixedWidth(100)
+        day_layout.addWidget(day_label)
+        
+        self.day_spinner = QSpinBox()
+        self.day_spinner.setMinimum(1)
+        self.day_spinner.setMaximum(99)
+        self.day_spinner.setValue(1)
+        day_layout.addWidget(self.day_spinner)
+        day_layout.addStretch()
+        
+        qcode_layout.addLayout(day_layout)
+        
+        # QCODE mirror button
+        qcode_mirror_button = QPushButton("Mirror for QCODE Take Review")
+        qcode_mirror_button.setProperty("class", "primary")
+        qcode_mirror_button.clicked.connect(self.mirror_for_qcode)
+        qcode_layout.addWidget(qcode_mirror_button)
+        
+        content_layout.addWidget(qcode_container)
+        
+        # Add separator
+        separator2 = QFrame()
+        separator2.setFrameShape(QFrame.Shape.HLine)
+        separator2.setFrameShadow(QFrame.Shadow.Sunken)
+        content_layout.addWidget(separator2)
+        
+        # Custom folder organization section - with splitter
+        custom_org_container = QWidget()
+        custom_org_container.setStyleSheet("background-color: rgba(245, 236, 220, 0.5);")
+        custom_org_layout = QVBoxLayout(custom_org_container)
+        custom_org_layout.setContentsMargins(0, 0, 0, 0)
+        custom_org_layout.setSpacing(8)
+        
+        custom_org_label = QLabel("Custom Folder Organization")
+        custom_org_label.setStyleSheet("font-weight: bold; font-size: 14px; color: #333333;")
+        custom_org_layout.addWidget(custom_org_label)
+        
+        org_info = QLabel("Select fields to create an organized folder structure. Order determines hierarchy.")
+        org_info.setStyleSheet("font-style: italic; color: #666666; font-size: 12px;")
+        org_info.setWordWrap(True)
+        custom_org_layout.addWidget(org_info)
+        
+        # Create splitter for field lists
+        field_splitter = QSplitter(Qt.Orientation.Horizontal)
+        field_splitter.setChildrenCollapsible(False)
+        
+        # Available fields container
+        available_container = QWidget()
+        available_container.setStyleSheet("background-color: rgba(245, 236, 220, 0.5);")
+        available_layout = QVBoxLayout(available_container)
+        available_layout.setContentsMargins(0, 0, 0, 0)
+        available_layout.setSpacing(4)
+        
+        available_label = QLabel("Available Fields")
+        available_label.setStyleSheet("font-weight: bold; color: #333333;")
+        available_layout.addWidget(available_label)
+        
+        self.available_list = QListWidget()
+        self.available_list.addItems(["Show", "Scene", "Take", "Category", "Subcategory", "Slate", "ixmlNote", "ixmlWildtrack", "ixmlCircled"])
+        self.available_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.available_list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        available_layout.addWidget(self.available_list)
+        
+        field_splitter.addWidget(available_container)
+        
+        # Buttons container - vertical in center
+        buttons_container = QWidget()
+        buttons_container.setStyleSheet("background-color: rgba(245, 236, 220, 0.5);")
+        buttons_container.setFixedWidth(40)
+        buttons_layout = QVBoxLayout(buttons_container)
+        buttons_layout.setContentsMargins(4, 0, 4, 0)
+        buttons_layout.setSpacing(8)
+        buttons_layout.addStretch()
+        
+        add_button = QPushButton("→")
+        add_button.setFixedSize(32, 32)
+        add_button.clicked.connect(self.add_fields)
+        buttons_layout.addWidget(add_button)
+        
+        remove_button = QPushButton("←")
+        remove_button.setFixedSize(32, 32)
+        remove_button.clicked.connect(self.remove_fields)
+        buttons_layout.addWidget(remove_button)
+        
+        buttons_layout.addSpacing(20)
+        
+        up_button = QPushButton("↑")
+        up_button.setFixedSize(32, 32)
+        up_button.clicked.connect(self.move_field_up)
+        buttons_layout.addWidget(up_button)
+        
+        down_button = QPushButton("↓")
+        down_button.setFixedSize(32, 32)
+        down_button.clicked.connect(self.move_field_down)
+        buttons_layout.addWidget(down_button)
+        
+        buttons_layout.addStretch()
+        
+        field_splitter.addWidget(buttons_container)
+        
+        # Selected fields container
+        selected_container = QWidget()
+        selected_container.setStyleSheet("background-color: rgba(245, 236, 220, 0.5);")
+        selected_layout = QVBoxLayout(selected_container)
+        selected_layout.setContentsMargins(0, 0, 0, 0)
+        selected_layout.setSpacing(4)
+        
+        selected_label = QLabel("Selected Order")
+        selected_label.setStyleSheet("font-weight: bold; color: #333333;")
+        selected_layout.addWidget(selected_label)
+        
+        self.selected_list = QListWidget()
+        self.selected_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.selected_list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        selected_layout.addWidget(self.selected_list)
+        
+        field_splitter.addWidget(selected_container)
+        
+        # Set splitter sizes equally
+        field_splitter.setSizes([100, 40, 100])
+        
+        custom_org_layout.addWidget(field_splitter, 1)  # Give this section more stretch
+        
+        # Preview section - simplified
+        preview_container = QWidget()
+        preview_container.setStyleSheet("background-color: rgba(245, 236, 220, 0.5);")
+        preview_layout = QVBoxLayout(preview_container)
+        preview_layout.setContentsMargins(0, 8, 0, 0)
+        preview_layout.setSpacing(4)
+        
+        preview_label = QLabel("Preview")
+        preview_label.setStyleSheet("font-weight: bold; color: #333333;")
+        preview_layout.addWidget(preview_label)
+        
+        self.example_text = QLabel("Select fields to see example folder structure")
+        self.example_text.setStyleSheet("font-family: monospace; color: #333333; background-color: rgba(229, 220, 200, 0.7); padding: 8px; border-radius: 4px;")
+        self.example_text.setWordWrap(True)
+        self.example_text.setMinimumHeight(60)
+        preview_layout.addWidget(self.example_text)
+        
+        custom_org_layout.addWidget(preview_container)
+        
+        # Options and mirror button - at bottom
+        options_layout = QHBoxLayout()
+        options_layout.setContentsMargins(0, 4, 0, 0)
+        
+        self.overwrite_checkbox = QCheckBox("Overwrite existing files")
+        self.overwrite_checkbox.setStyleSheet("color: #333333;")
+        options_layout.addWidget(self.overwrite_checkbox)
+        options_layout.addStretch()
+        
+        custom_org_layout.addLayout(options_layout)
+        
+        custom_mirror_button = QPushButton("Mirror with Custom Organization")
+        custom_mirror_button.clicked.connect(self.mirror_with_custom_org)
+        custom_org_layout.addWidget(custom_mirror_button)
+        
+        content_layout.addWidget(custom_org_container, 1)  # Give more stretch to this section
+        
+        # Add content widget to scroll area
+        scroll_area.setWidget(content_widget)
+        main_layout.addWidget(scroll_area)
+        
+        # Connect signals for preview updates
+        self.selected_list.model().rowsInserted.connect(self.update_preview)
+        self.selected_list.model().rowsRemoved.connect(self.update_preview)
+        self.selected_list.model().layoutChanged.connect(self.update_preview)
     
     def set_selected_rows(self, selected_rows):
         """Set the selected rows from parent"""
@@ -3039,10 +3401,7 @@ class AudioMetadataEditor(QMainWindow):
     def mirror_for_qcode(self):
         """Mirror files in QCODE Take Review format"""
         # Check if files are selected
-        selected_rows = []
-        if hasattr(self.parent, 'get_selected_actual_rows'):
-            selected_rows = self.parent.get_selected_actual_rows()
-            
+        selected_rows = self.get_selected_rows_from_parent()
         if not selected_rows:
             QMessageBox.warning(self, "No Selection", "Please select files in the main panel to mirror.")
             return
@@ -3055,11 +3414,8 @@ class AudioMetadataEditor(QMainWindow):
         day_number = self.day_spinner.value()
         overwrite = self.overwrite_checkbox.isChecked()
         
-        # Call the parent's mirror method if it exists
-        if hasattr(self.parent, 'mirror_files_qcode_take_review'):
-            self.parent.mirror_files_qcode_take_review(selected_rows, dest_dir, day_number, overwrite)
-        else:
-            QMessageBox.information(self, "Not Implemented", "QCODE mirroring is not yet implemented.")
+        # Call the parent's mirror method
+        self.parent.mirror_files_qcode_take_review(selected_rows, dest_dir, day_number, overwrite)
     
     def mirror_with_custom_org(self):
         """Mirror files with custom organization"""
@@ -3090,67 +3446,39 @@ class AudioMetadataEditor(QMainWindow):
     
     def add_fields(self):
         """Add selected fields from available to selected"""
-        # Disconnect the preview update temporarily to avoid multiple updates
-        self.selected_list.blockSignals(True)
-        
         for item in self.available_list.selectedItems():
             # Create a new item to add to selected list
-            new_item = QListWidgetItem(item.text())
+            new_item = item.text()
             self.selected_list.addItem(new_item)
             
             # Remove from available list
             self.available_list.takeItem(self.available_list.row(item))
-        
-        # Reconnect signals and update preview
-        self.selected_list.blockSignals(False)
-        self.update_preview()
     
     def remove_fields(self):
         """Remove selected fields from selected to available"""
-        # Disconnect the preview update temporarily
-        self.selected_list.blockSignals(True)
-        
         for item in self.selected_list.selectedItems():
             # Create a new item to add back to available list
-            new_item = QListWidgetItem(item.text())
+            new_item = item.text()
             self.available_list.addItem(new_item)
             
             # Remove from selected list
             self.selected_list.takeItem(self.selected_list.row(item))
-        
-        # Reconnect signals and update preview
-        self.selected_list.blockSignals(False)
-        self.update_preview()
     
     def move_field_up(self):
         """Move selected field up in the list"""
         current_row = self.selected_list.currentRow()
         if current_row > 0:
-            # Disconnect the preview update temporarily
-            self.selected_list.blockSignals(True)
-            
             current_item = self.selected_list.takeItem(current_row)
             self.selected_list.insertItem(current_row - 1, current_item)
             self.selected_list.setCurrentRow(current_row - 1)
-            
-            # Reconnect signals and update preview
-            self.selected_list.blockSignals(False)
-            self.update_preview()
     
     def move_field_down(self):
         """Move selected field down in the list"""
         current_row = self.selected_list.currentRow()
         if current_row < self.selected_list.count() - 1:
-            # Disconnect the preview update temporarily
-            self.selected_list.blockSignals(True)
-            
             current_item = self.selected_list.takeItem(current_row)
             self.selected_list.insertItem(current_row + 1, current_item)
             self.selected_list.setCurrentRow(current_row + 1)
-            
-            # Reconnect signals and update preview
-            self.selected_list.blockSignals(False)
-            self.update_preview()
     
     def update_preview(self):
         """Update the preview of folder structure"""
@@ -3170,7 +3498,6 @@ class AudioMetadataEditor(QMainWindow):
         example = example.replace("<Take>", "<Take: 03>")
         example = example.replace("<Category>", "<Category: Andre>")
         example = example.replace("<Subcategory>", "<Subcategory: 2>")
-        example = example.replace("<Slate>", "<Slate: D>")
         
         self.example_text.setText(example)
     
@@ -3222,502 +3549,6 @@ class AudioMetadataEditor(QMainWindow):
         if hasattr(self, 'csv_headers') and 0 <= index < len(self.csv_headers):
             self.take_column = self.csv_headers[index]
             self.update_entry_match_display()
-
-    def undo_last_change(self):
-        """Undo the last change made to the metadata"""
-        if self.undo_redo_stack.can_undo():
-            command = self.undo_redo_stack.command_to_undo()
-            self.undo_redo_stack.undo()
-            self.update_undo_redo_buttons()
-            self.status_label.setText(f"Undo: {command.description}")
-        else:
-            QMessageBox.information(self, "No Changes", "No changes to undo.")
-    
-    def redo_last_change(self):
-        """Redo the last undone change"""
-        if self.undo_redo_stack.can_redo():
-            command = self.undo_redo_stack.command_to_redo()
-            self.undo_redo_stack.redo()
-            self.update_undo_redo_buttons()
-            self.status_label.setText(f"Redo: {command.description}")
-        else:
-            QMessageBox.information(self, "No Changes", "No changes to redo.")
-            
-    def update_undo_redo_buttons(self):
-        """Update the enabled state of undo/redo buttons"""
-        if hasattr(self, 'undo_button'):
-            self.undo_button.setEnabled(self.undo_redo_stack.can_undo())
-        if hasattr(self, 'redo_button'):
-            self.redo_button.setEnabled(self.undo_redo_stack.can_redo())
-
-    def create_undo_icon(self):
-        """Create a modern undo icon using SVG"""
-        # SVG for undo icon - curved arrow pointing left
-        svg_content = """
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M7 9L4 12M4 12L7 15M4 12H16C18.2091 12 20 13.7909 20 16V16" 
-                  stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        """
-        
-        # Current theme will determine the icon color
-        stroke_color = "#333333" if self.current_theme == 'light' else "#FFFFFF"
-        svg_content = svg_content.replace("currentColor", stroke_color)
-        
-        # Create a QPixmap with transparent background
-        icon_size = 24
-        pixmap = QPixmap(icon_size, icon_size)
-        pixmap.fill(Qt.GlobalColor.transparent)
-        
-        # Create a painter for the pixmap
-        painter = QPainter(pixmap)
-        
-        # Load the SVG content
-        svg_renderer = QSvgRenderer(bytearray(svg_content, encoding='utf-8'))
-        
-        # Render the SVG onto the pixmap
-        svg_renderer.render(painter)
-        
-        # Finish painting
-        painter.end()
-        
-        return QIcon(pixmap)
-    
-    def create_redo_icon(self):
-        """Create a modern redo icon using SVG"""
-        # SVG for redo icon - curved arrow pointing right
-        svg_content = """
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M17 9L20 12M20 12L17 15M20 12H8C5.79086 12 4 13.7909 4 16V16" 
-                  stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        """
-        
-        # Current theme will determine the icon color
-        stroke_color = "#333333" if self.current_theme == 'light' else "#FFFFFF"
-        svg_content = svg_content.replace("currentColor", stroke_color)
-        
-        # Create a QPixmap with transparent background
-        icon_size = 24
-        pixmap = QPixmap(icon_size, icon_size)
-        pixmap.fill(Qt.GlobalColor.transparent)
-        
-        # Create a painter for the pixmap
-        painter = QPainter(pixmap)
-        
-        # Load the SVG content
-        svg_renderer = QSvgRenderer(bytearray(svg_content, encoding='utf-8'))
-        
-        # Render the SVG onto the pixmap
-        svg_renderer.render(painter)
-        
-        # Finish painting
-        painter.end()
-        
-        return QIcon(pixmap)
-
-class MirrorPanel(QWidget):
-    """Panel for mirroring files to another location with organization options"""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.parent = parent
-        self.setObjectName("MirrorPanel")
-        
-        # Initialize variables
-        self.selected_rows = []
-        self.destination_dir = ""
-        
-        # Setup UI - minimal implementation
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(10)
-        
-        # Title with close button
-        title_layout = QHBoxLayout()
-        panel_title = QLabel("Mirror Files")
-        panel_title.setStyleSheet("font-weight: bold; font-size: 16px;")
-        title_layout.addWidget(panel_title)
-        title_layout.addStretch()
-        
-        close_button = QPushButton("×")
-        close_button.setFixedSize(24, 24)
-        close_button.setStyleSheet("font-weight: bold; font-size: 16px;")
-        close_button.clicked.connect(self.close_panel)
-        title_layout.addWidget(close_button)
-        layout.addLayout(title_layout)
-        
-        # Selected files count
-        self.file_count_label = QLabel("No files selected")
-        layout.addWidget(self.file_count_label)
-        
-        # Destination folder section
-        dest_group = QGroupBox("Destination Folder")
-        dest_form_layout = QVBoxLayout(dest_group)
-        
-        # Destination input
-        dest_input_layout = QHBoxLayout()
-        self.dest_input = QLineEdit()
-        self.dest_input.setPlaceholderText("Select destination folder...")
-        self.dest_input.setReadOnly(True)
-        dest_input_layout.addWidget(self.dest_input)
-        
-        dest_button = QPushButton("Browse...")
-        dest_button.setMaximumWidth(100)
-        dest_button.clicked.connect(self.browse_destination)
-        dest_input_layout.addWidget(dest_button)
-        
-        dest_form_layout.addLayout(dest_input_layout)
-        layout.addWidget(dest_group)
-        
-        # Day number input for QCODE
-        day_group = QGroupBox("QCODE Options")
-        day_layout = QHBoxLayout(day_group)
-        
-        day_label = QLabel("Day Number:")
-        day_layout.addWidget(day_label)
-        
-        self.day_spinner = QSpinBox()
-        self.day_spinner.setMinimum(1)
-        self.day_spinner.setMaximum(99)
-        self.day_spinner.setValue(1)
-        day_layout.addWidget(self.day_spinner)
-        day_layout.addStretch()
-        
-        layout.addWidget(day_group)
-        
-        # Options
-        options_group = QGroupBox("Options")
-        options_layout = QVBoxLayout(options_group)
-        
-        self.overwrite_checkbox = QCheckBox("Overwrite existing files")
-        options_layout.addWidget(self.overwrite_checkbox)
-        
-        layout.addWidget(options_group)
-        
-        # Custom folder organization section
-        custom_org_group = QGroupBox("Custom Folder Organization")
-        custom_org_layout = QVBoxLayout(custom_org_group)
-        
-        # Explanation
-        explanation = QLabel("Select metadata fields to create folder structure:")
-        explanation.setWordWrap(True)
-        custom_org_layout.addWidget(explanation)
-        
-        # Lists and buttons
-        lists_layout = QHBoxLayout()
-        
-        # Available fields
-        available_container = QWidget()
-        available_layout = QVBoxLayout(available_container)
-        available_layout.setContentsMargins(0, 0, 0, 0)
-        
-        available_label = QLabel("Available Fields:")
-        available_layout.addWidget(available_label)
-        
-        self.available_list = QListWidget()
-        available_layout.addWidget(self.available_list)
-        
-        # Add default available fields
-        for field in ["Show", "Scene", "Take", "Category", "Subcategory", "Slate"]:
-            self.available_list.addItem(field)
-            
-        self.available_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        
-        lists_layout.addWidget(available_container)
-        
-        # Add/Remove buttons
-        buttons_container = QWidget()
-        buttons_layout_fields = QVBoxLayout(buttons_container)
-        buttons_layout_fields.setContentsMargins(8, 0, 8, 0)
-        buttons_layout_fields.addStretch()
-        
-        add_button = QPushButton("→")
-        add_button.setFixedWidth(40)
-        add_button.clicked.connect(lambda: self.handle_add_fields())
-        buttons_layout_fields.addWidget(add_button)
-        
-        remove_button = QPushButton("←")
-        remove_button.setFixedWidth(40)
-        remove_button.clicked.connect(lambda: self.handle_remove_fields())
-        buttons_layout_fields.addWidget(remove_button)
-        
-        buttons_layout_fields.addStretch()
-        
-        lists_layout.addWidget(buttons_container)
-        
-        # Selected fields
-        selected_container = QWidget()
-        selected_layout = QVBoxLayout(selected_container)
-        selected_layout.setContentsMargins(0, 0, 0, 0)
-        
-        selected_label = QLabel("Selected Fields:")
-        selected_layout.addWidget(selected_label)
-        
-        self.selected_list = QListWidget()
-        self.selected_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        selected_layout.addWidget(self.selected_list)
-        
-        # Up/down buttons
-        updown_layout = QHBoxLayout()
-        
-        up_button = QPushButton("↑")
-        up_button.setFixedWidth(40)
-        up_button.clicked.connect(lambda: self.handle_move_field_up())
-        updown_layout.addWidget(up_button)
-        
-        down_button = QPushButton("↓")
-        down_button.setFixedWidth(40)
-        down_button.clicked.connect(lambda: self.handle_move_field_down())
-        updown_layout.addWidget(down_button)
-        
-        selected_layout.addLayout(updown_layout)
-        
-        lists_layout.addWidget(selected_container)
-        
-        custom_org_layout.addLayout(lists_layout)
-        
-        # Preview
-        preview_group = QGroupBox("Example Structure:")
-        preview_layout = QVBoxLayout(preview_group)
-        
-        self.example_text = QLabel("Select fields to see example folder structure")
-        self.example_text.setWordWrap(True)
-        self.example_text.setStyleSheet("font-family: Menlo, Monaco, 'SF Mono', 'Courier New'; background-color: white; padding: 5px; border: 1px solid #ccc;")
-        preview_layout.addWidget(self.example_text)
-        
-        custom_org_layout.addWidget(preview_group)
-        
-        # Mirror button
-        mirror_custom_button = QPushButton("Mirror Files with Custom Organization")
-        mirror_custom_button.clicked.connect(lambda: QMessageBox.information(self, "Not Implemented", "Custom folder organization is not yet implemented."))
-        custom_org_layout.addWidget(mirror_custom_button)
-        
-        layout.addWidget(custom_org_group)
-        
-        # Mirror buttons for QCODE
-        qcode_buttons_layout = QVBoxLayout()
-        
-        mirror_qcode_button = QPushButton("Mirror for QCODE Take Review")
-        # Temporarily commenting out until we can properly implement the mirror_for_qcode method
-        # mirror_qcode_button.clicked.connect(self.mirror_for_qcode)
-        mirror_qcode_button.clicked.connect(lambda: QMessageBox.information(self, "Not Implemented", "QCODE mirroring is not yet implemented."))
-        qcode_buttons_layout.addWidget(mirror_qcode_button)
-        
-        layout.addLayout(qcode_buttons_layout)
-        
-        # Add stretch to push everything to the top
-        layout.addStretch()
-    
-    def close_panel(self):
-        """Close the panel"""
-        if hasattr(self.parent, 'toggle_mirror_panel'):
-            self.parent.toggle_mirror_panel()
-    
-    def set_selected_rows(self, selected_rows):
-        """Set the selected rows"""
-        self.selected_rows = selected_rows
-        self.update_selected_count()
-    
-    def update_selected_count(self):
-        """Update the file count label"""
-        count = len(self.selected_rows) if self.selected_rows else 0
-        self.file_count_label.setText(f"{count} file{'s' if count != 1 else ''} selected")
-        
-    def browse_destination(self):
-        """Browse for destination directory"""
-        folder_path = QFileDialog.getExistingDirectory(self, "Select Destination Folder")
-        if folder_path:
-            self.dest_input.setText(folder_path)
-            self.destination_dir = folder_path
-
-    def handle_add_fields(self):
-        """Add selected fields from available to selected"""
-        for item in self.available_list.selectedItems():
-            # Create a new item to add to selected list
-            new_item = QListWidgetItem(item.text())
-            self.selected_list.addItem(new_item)
-            
-            # Remove from available list
-            self.available_list.takeItem(self.available_list.row(item))
-        self.update_folder_preview()
-    
-    def handle_remove_fields(self):
-        """Remove selected fields from selected to available"""
-        for item in self.selected_list.selectedItems():
-            # Create a new item to add back to available list
-            new_item = QListWidgetItem(item.text())
-            self.available_list.addItem(new_item)
-            
-            # Remove from selected list
-            self.selected_list.takeItem(self.selected_list.row(item))
-        self.update_folder_preview()
-    
-    def handle_move_field_up(self):
-        """Move selected field up in the list"""
-        current_row = self.selected_list.currentRow()
-        if current_row > 0:
-            current_item = self.selected_list.takeItem(current_row)
-            self.selected_list.insertItem(current_row - 1, current_item)
-            self.selected_list.setCurrentRow(current_row - 1)
-            self.update_folder_preview()
-    
-    def handle_move_field_down(self):
-        """Move selected field down in the list"""
-        current_row = self.selected_list.currentRow()
-        if current_row < self.selected_list.count() - 1:
-            current_item = self.selected_list.takeItem(current_row)
-            self.selected_list.insertItem(current_row + 1, current_item)
-            self.selected_list.setCurrentRow(current_row + 1)
-            self.update_folder_preview()
-    
-    def update_folder_preview(self):
-        """Update the preview of folder structure"""
-        if self.selected_list.count() == 0:
-            self.example_text.setText("Select fields to see example folder structure")
-            return
-            
-        # Build example structure
-        structure = "destination/"
-        for i in range(self.selected_list.count()):
-            field = self.selected_list.item(i).text()
-            structure += f"<{field}>/"
-            
-        # Add example values for clearer visualization
-        example = structure.replace("<Show>", "<Show: PR2>")
-        example = example.replace("<Scene>", "<Scene: 2.14B>")
-        example = example.replace("<Take>", "<Take: 03>")
-        example = example.replace("<Category>", "<Category: Andre>")
-        example = example.replace("<Subcategory>", "<Subcategory: 2>")
-        example = example.replace("<Slate>", "<Slate: D>")
-        
-        self.example_text.setText(example)
-
-
-class FilenameExtractorDialog(QDialog):
-    """Dialog for extracting metadata from filenames"""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Extract Metadata from Filenames")
-        self.resize(500, 400)
-        
-        # Initial values
-        self.separator = "_"
-        self.mappings = []
-        
-        # Setup UI
-        layout = QVBoxLayout(self)
-        
-        # Separator input
-        separator_layout = QHBoxLayout()
-        separator_label = QLabel("Separator:")
-        separator_layout.addWidget(separator_label)
-        
-        self.separator_input = QLineEdit(self.separator)
-        separator_layout.addWidget(self.separator_input)
-        
-        layout.addLayout(separator_layout)
-        
-        # Mappings table
-        layout.addWidget(QLabel("Field Mappings:"))
-        
-        self.mappings_table = QTableWidget(0, 2)
-        self.mappings_table.setHorizontalHeaderLabels(["Field", "Position"])
-        self.mappings_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.mappings_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
-        self.mappings_table.setColumnWidth(1, 100)
-        layout.addWidget(self.mappings_table)
-        
-        # Add mapping button
-        add_button = QPushButton("Add Mapping")
-        add_button.clicked.connect(self.add_mapping)
-        layout.addWidget(add_button)
-        
-        # Preset button for common pattern
-        preset_button = QPushButton("Use Common Pattern (Show_Character_SceneNumber_Take)")
-        preset_button.clicked.connect(self.preset_common_pattern)
-        layout.addWidget(preset_button)
-        
-        # Buttons
-        button_layout = QHBoxLayout()
-        button_layout.addStretch()
-        
-        cancel_button = QPushButton("Cancel")
-        cancel_button.clicked.connect(self.reject)
-        button_layout.addWidget(cancel_button)
-        
-        ok_button = QPushButton("Extract")
-        ok_button.clicked.connect(self.accept)
-        button_layout.addWidget(ok_button)
-        
-        layout.addLayout(button_layout)
-    
-    def add_mapping(self):
-        """Add a new mapping row"""
-        row = self.mappings_table.rowCount()
-        self.mappings_table.insertRow(row)
-        
-        # Field combo box
-        field_combo = QComboBox()
-        field_combo.addItems(["Show", "Scene", "Take", "Category", "Subcategory", "Slate"])
-        self.mappings_table.setCellWidget(row, 0, field_combo)
-        
-        # Position spin box
-        position_spin = QSpinBox()
-        position_spin.setMinimum(1)
-        position_spin.setMaximum(10)
-        position_spin.setValue(row + 1)
-        self.mappings_table.setCellWidget(row, 1, position_spin)
-    
-    def preset_common_pattern(self):
-        """Set up mappings for common filename pattern: Show_Character_SceneNumber_Take"""
-        # Clear existing mappings
-        while self.mappings_table.rowCount() > 0:
-            self.mappings_table.removeRow(0)
-        
-        # Add preset mappings
-        mappings = [
-            ("Show", 1),
-            ("Category", 2), # Category is character
-            ("Scene", 3),
-            ("Take", 4)
-        ]
-        
-        for field, position in mappings:
-            row = self.mappings_table.rowCount()
-            self.mappings_table.insertRow(row)
-            
-            field_combo = QComboBox()
-            field_combo.addItems(["Show", "Scene", "Take", "Category", "Subcategory", "Slate"])
-            field_combo.setCurrentText(field)
-            self.mappings_table.setCellWidget(row, 0, field_combo)
-            
-            position_spin = QSpinBox()
-            position_spin.setMinimum(1)
-            position_spin.setMaximum(10)
-            position_spin.setValue(position)
-            self.mappings_table.setCellWidget(row, 1, position_spin)
-        
-        # Set separator to underscore
-        self.separator_input.setText("_")
-    
-    def accept(self):
-        """Get the values when accepting the dialog"""
-        self.separator = self.separator_input.text()
-        if not self.separator:
-            self.separator = "_"  # Default to underscore
-        
-        # Get mappings from table
-        self.mappings = []
-        for row in range(self.mappings_table.rowCount()):
-            field_combo = self.mappings_table.cellWidget(row, 0)
-            position_spin = self.mappings_table.cellWidget(row, 1)
-            
-            if field_combo and position_spin:
-                field = field_combo.currentText()
-                position = position_spin.value()
-                self.mappings.append((field, position))
-        
-        super().accept()
 
 class CSVMatchWizard(QDialog):
     """Wizard for matching CSV data to WAV files in steps"""
@@ -4334,7 +4165,7 @@ class CSVMatchWizard(QDialog):
             if not self.take_column:
                 QMessageBox.warning(self, "Missing Column", "Please select a take column in the CSV file.")
                 return False
-                
+            
             # Check if we have potential matches
             try:
                 char_col_idx = self.csv_headers.index(self.character_column)
@@ -4413,8 +4244,10 @@ class CSVMatchWizard(QDialog):
             except Exception as e:
                 QMessageBox.warning(self, "Error", f"Error validating matches: {str(e)}")
                 return False
-                
+            
             return True
+            
+        return True
     
     def update_step_display(self):
         """Update the step display and button visibility"""
@@ -4451,8 +4284,8 @@ class CSVMatchWizard(QDialog):
         """Navigate to the next step"""
         # Validate current step
         if not self.validate_current_step():
-                return
-        
+            return
+            
         # Move to next step if validation passed
         if self.current_step < 2:
             self.current_step += 1
@@ -4621,6 +4454,600 @@ class CSVMatchWizard(QDialog):
             
             self.match_summary.setText(summary_text)
     
+    def browse_csv_file(self):
+        """Browse for a CSV file"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select CSV File", "", "CSV Files (*.csv);;All Files (*.*)"
+        )
+        
+        if not file_path:
+            return
+            
+        self.csv_file_path = file_path
+        self.csv_file_input.setText(file_path)
+        
+        # Load CSV data
+        self.load_csv_data()
+    
+    def on_audio_char_double_clicked(self, item):
+        """Handle double-click on audio character item"""
+        audio_char = item.text()
+        
+        # Find first unmatched CSV character to match with
+        for i in range(self.csv_char_list.count()):
+            csv_item = self.csv_char_list.item(i)
+            if csv_item:
+                csv_char = csv_item.text()
+                self.character_matches[audio_char] = csv_char
+                self.update_matches_list()
+                self.update_character_lists()
+                break
+    
+    def on_csv_char_double_clicked(self, item):
+        """Handle double-click on CSV character item"""
+        csv_char = item.text()
+        
+        # Find first unmatched audio character to match with
+        for i in range(self.audio_char_list.count()):
+            audio_item = self.audio_char_list.item(i)
+            if audio_item:
+                audio_char = audio_item.text()
+                self.character_matches[audio_char] = csv_char
+                self.update_matches_list()
+                self.update_character_lists()
+                break
+    
+    def on_match_double_clicked(self, item):
+        """Handle double-click on a match item to unmatch it"""
+        match_text = item.text()
+        audio_char = match_text.split(" → ")[0]
+        
+        # Remove the match
+        if audio_char in self.character_matches:
+            del self.character_matches[audio_char]
+        
+        # Update lists
+        self.update_matches_list()
+        self.update_character_lists()
+
+    def update_audio_character_list(self):
+        """Update the list of characters from audio files, showing only unmatched ones"""
+        if not hasattr(self.parent, 'all_files') or not self.parent.all_files:
+            return
+            
+        try:
+            # Get unique character names (Category field) from audio files
+            audio_characters = set()
+            for file_path, metadata in self.parent.all_files:
+                character = metadata.get("Category", "")
+                if character:
+                    audio_characters.add(character)
+            
+            # Get characters that are already matched
+            matched_audio_chars = set(self.character_matches.keys())
+            
+            # Get unmatched characters
+            unmatched_audio_chars = audio_characters - matched_audio_chars
+            
+            # Store these for use in filter_character_lists
+            self._all_unmatched_audio_chars = sorted(unmatched_audio_chars)
+            
+            # If we have a search filter active, don't update the list directly
+            if hasattr(self, 'character_search_input') and self.character_search_input.text():
+                return
+                
+            # If no active filter, update the audio character list
+            self.audio_char_list.clear()
+            for character in self._all_unmatched_audio_chars:
+                self.audio_char_list.addItem(character)
+        except Exception as e:
+            print(f"Error updating audio character list: {e}")
+            
+    def update_csv_character_list(self):
+        """Update the list of characters from the CSV file, showing only unmatched ones"""
+        if not self.csv_data or not self.character_column:
+            return
+            
+        try:
+            # Get the index of the character column
+            char_col_idx = self.csv_headers.index(self.character_column)
+            
+            # Get unique character names from CSV
+            csv_characters = set()
+            for row in self.csv_data:
+                if char_col_idx < len(row) and row[char_col_idx]:
+                    csv_characters.add(row[char_col_idx])
+            
+            # Get characters that are already matched
+            matched_csv_chars = set(self.character_matches.values())
+            
+            # Get unmatched characters
+            unmatched_csv_chars = csv_characters - matched_csv_chars
+            
+            # Store these for use in filter_character_lists
+            self._all_unmatched_csv_chars = sorted(unmatched_csv_chars)
+            
+            # If we have a search filter active, don't update the list directly
+            if hasattr(self, 'character_search_input') and self.character_search_input.text():
+                return
+                
+            # If no active filter, update the CSV character list
+            self.csv_char_list.clear()
+            for character in self._all_unmatched_csv_chars:
+                self.csv_char_list.addItem(character)
+        except Exception as e:
+            print(f"Error updating CSV character list: {e}")
+            
+    def match_selected_characters(self):
+        """Match the selected characters from both lists"""
+        audio_item = self.audio_char_list.currentItem()
+        csv_item = self.csv_char_list.currentItem()
+        
+        if audio_item and csv_item:
+            audio_char = audio_item.text()
+            csv_char = csv_item.text()
+            
+            # Create the match
+            self.character_matches[audio_char] = csv_char
+            
+            # Update the lists
+            self.update_matches_list()
+            self.update_character_lists()
+    
+    def unmatch_selected_character(self):
+        """Remove the selected match"""
+        match_item = self.matches_list.currentItem()
+        if match_item:
+            match_text = match_item.text()
+            audio_char = match_text.split(" → ")[0]
+            
+            # Remove the match
+            if audio_char in self.character_matches:
+                del self.character_matches[audio_char]
+            
+            # Update the lists
+            self.update_matches_list()
+            self.update_character_lists()
+    
+    def update_matches_list(self):
+        """Update the list of matched character pairs"""
+        self.matches_list.clear()
+        # Sort matches alphabetically by audio character name
+        sorted_matches = sorted(self.character_matches.items(), key=lambda x: x[0])
+        for audio_char, csv_char in sorted_matches:
+            self.matches_list.addItem(f"{audio_char} → {csv_char}")
+    
+    def create_entry_match_page(self):
+        """Create the entry match page where users configure matching by scene and take numbers"""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
+        
+        # Instructions
+        instructions = QLabel(
+            "Configure how CSV entries will be matched to audio files. " +
+            "Select which CSV columns contain the scene and take information to match with your audio files."
+        )
+        instructions.setWordWrap(True)
+        instructions.setStyleSheet("font-style: italic; color: #555555;")
+        layout.addWidget(instructions)
+        
+        # Create a scroll area for the content
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        
+        # Create container for all content
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_layout.setSpacing(12)
+        
+        # Matching configuration group
+        matching_group = QGroupBox("Matching Configuration")
+        matching_layout = QVBoxLayout(matching_group)
+        matching_layout.setContentsMargins(10, 15, 10, 10)
+        
+        # Show selected character column (already selected in step 1)
+        char_layout = QHBoxLayout()
+        char_label = QLabel("Character Column:")
+        char_label.setMinimumWidth(120)
+        self.character_display = QLineEdit()
+        self.character_display.setReadOnly(True)
+        self.character_display.setText(self.character_column if hasattr(self, 'character_column') else "")
+        char_layout.addWidget(char_label)
+        char_layout.addWidget(self.character_display)
+        matching_layout.addLayout(char_layout)
+        
+        # Scene column selection
+        scene_layout = QHBoxLayout()
+        scene_label = QLabel("Scene Column:")
+        scene_label.setMinimumWidth(120)
+        self.scene_column_combo = QComboBox()
+        if hasattr(self, 'csv_headers'):
+            self.scene_column_combo.addItems(self.csv_headers)
+            # Try to auto-select column with "scene" in the name
+            for i, header in enumerate(self.csv_headers):
+                if "scene" in header.lower():
+                    self.scene_column_combo.setCurrentIndex(i)
+                    self.scene_column = header
+                    break
+        self.scene_column_combo.currentIndexChanged.connect(lambda idx: self.update_scene_column(idx))
+        scene_layout.addWidget(scene_label)
+        scene_layout.addWidget(self.scene_column_combo)
+        matching_layout.addLayout(scene_layout)
+        
+        # Take column selection
+        take_layout = QHBoxLayout()
+        take_label = QLabel("Take Column:")
+        take_label.setMinimumWidth(120)
+        self.take_column_combo = QComboBox()
+        if hasattr(self, 'csv_headers'):
+            self.take_column_combo.addItems(self.csv_headers)
+            # Try to auto-select column with "take" in the name
+            for i, header in enumerate(self.csv_headers):
+                if "take" in header.lower():
+                    self.take_column_combo.setCurrentIndex(i)
+                    self.take_column = header
+                    break
+        self.take_column_combo.currentIndexChanged.connect(lambda idx: self.update_take_column(idx))
+        take_layout.addWidget(take_label)
+        take_layout.addWidget(self.take_column_combo)
+        matching_layout.addLayout(take_layout)
+        
+        # Add options for matching flexibility
+        matching_options_layout = QVBoxLayout()
+        matching_options_layout.setContentsMargins(0, 10, 0, 0)
+        
+        # Case sensitivity option
+        self.case_sensitive_check = QCheckBox("Case sensitive matching")
+        self.case_sensitive_check.setChecked(False)
+        self.case_sensitive_check.stateChanged.connect(self.update_entry_match_display)
+        matching_options_layout.addWidget(self.case_sensitive_check)
+        
+        # Partial scene matching option
+        self.partial_scene_check = QCheckBox("Allow partial scene number matching (e.g., '5.1' matches '5.14D')")
+        self.partial_scene_check.setChecked(True)
+        self.partial_scene_check.stateChanged.connect(self.update_entry_match_display)
+        matching_options_layout.addWidget(self.partial_scene_check)
+        
+        matching_layout.addLayout(matching_options_layout)
+        
+        scroll_layout.addWidget(matching_group)
+        
+        # Preview section
+        preview_group = QGroupBox("Column Preview")
+        preview_layout = QHBoxLayout(preview_group)
+        preview_layout.setContentsMargins(10, 15, 10, 10)
+        
+        # Scene preview
+        scene_preview_container = QWidget()
+        scene_preview_layout = QVBoxLayout(scene_preview_container)
+        scene_preview_label = QLabel("Scene Values:")
+        scene_preview_layout.addWidget(scene_preview_label)
+        self.scene_preview_list = QListWidget()
+        scene_preview_layout.addWidget(self.scene_preview_list)
+        preview_layout.addWidget(scene_preview_container)
+        
+        # Take preview
+        take_preview_container = QWidget()
+        take_preview_layout = QVBoxLayout(take_preview_container)
+        take_preview_label = QLabel("Take Values:")
+        take_preview_layout.addWidget(take_preview_label)
+        self.take_preview_list = QListWidget()
+        take_preview_layout.addWidget(self.take_preview_list)
+        preview_layout.addWidget(take_preview_container)
+        
+        scroll_layout.addWidget(preview_group)
+        
+        # Match summary group
+        summary_group = QGroupBox("Match Summary")
+        summary_layout = QVBoxLayout(summary_group)
+        summary_layout.setContentsMargins(10, 15, 10, 10)
+        
+        self.match_summary = QTextEdit()
+        self.match_summary.setReadOnly(True)
+        self.match_summary.setMinimumHeight(100)
+        self.match_summary.setStyleSheet("background-color: rgba(255, 255, 255, 0.8);")
+        summary_layout.addWidget(self.match_summary)
+        
+        scroll_layout.addWidget(summary_group)
+        
+        # Set the scroll area widget
+        scroll_area.setWidget(scroll_content)
+        layout.addWidget(scroll_area)
+        
+        # Initialize the match display
+        QTimer.singleShot(0, self.update_entry_match_display)
+        
+        return page
+    
+    def update_scene_column(self, index):
+        """Update the scene column selection"""
+        if hasattr(self, 'csv_headers') and 0 <= index < len(self.csv_headers):
+            self.scene_column = self.csv_headers[index]
+            self.update_entry_match_display()
+    
+    def update_take_column(self, index):
+        """Update the take column selection"""
+        if hasattr(self, 'csv_headers') and 0 <= index < len(self.csv_headers):
+            self.take_column = self.csv_headers[index]
+            self.update_entry_match_display()
+    
+    def update_mapping_preview(self):
+        """Update the mapping preview with current selections."""
+        # Early return if mapping_preview doesn't exist yet
+        if not hasattr(self, 'mapping_preview'):
+            return
+            
+        # Handle QTextEdit (used in field_mapping_page)
+        if isinstance(self.mapping_preview, QTextEdit):
+            if not hasattr(self, 'csv_headers') or not self.csv_headers:
+                self.mapping_preview.setText("No CSV data loaded")
+                return
+                
+            # Get the current mappings
+            preview_text = "Character Field: "
+            if hasattr(self, 'character_field_combo') and self.character_field_combo.currentIndex() >= 0:
+                preview_text += self.csv_headers[self.character_field_combo.currentIndex()]
+            else:
+                preview_text += "Not selected"
+                
+            preview_text += "\nScene Field: "
+            if hasattr(self, 'scene_field_combo') and self.scene_field_combo.currentIndex() >= 0:
+                preview_text += self.csv_headers[self.scene_field_combo.currentIndex()]
+            else:
+                preview_text += "Not selected"
+                
+            preview_text += "\nTake Field: "
+            if hasattr(self, 'take_field_combo') and self.take_field_combo.currentIndex() >= 0:
+                preview_text += self.csv_headers[self.take_field_combo.currentIndex()]
+            else:
+                preview_text += "Not selected"
+                
+            # Add additional field mappings
+            if hasattr(self, 'field_mapping_list') and self.field_mapping_list.rowCount() > 0:
+                preview_text += "\n\nAdditional Field Mappings:"
+                for row in range(self.field_mapping_list.rowCount()):
+                    csv_combo = self.field_mapping_list.cellWidget(row, 0)
+                    meta_combo = self.field_mapping_list.cellWidget(row, 1)
+                    
+                    if csv_combo and meta_combo:
+                        csv_field = csv_combo.currentText()
+                        meta_field = meta_combo.currentText()
+                        preview_text += f"\n- {csv_field} → {meta_field}"
+            
+            self.mapping_preview.setText(preview_text)
+        
+        # Handle QListWidget (used in entry_match_page)
+        elif isinstance(self.mapping_preview, QListWidget):
+        self.mapping_preview.clear()
+        
+        # Ensure field_mappings is a dictionary
+        if not hasattr(self, 'field_mappings'):
+            self.field_mappings = {}
+        elif not isinstance(self.field_mappings, dict):
+            self.field_mappings = {}
+            
+        # Update field_mappings from current UI state
+        if hasattr(self, 'field_mapping_controls'):
+                self.field_mappings.clear()  # Reset mappings
+            for csv_field, dropdown, checkbox in self.field_mapping_controls:
+                if checkbox.isChecked() and dropdown.currentText():
+                    wav_field = dropdown.currentText()
+                    self.field_mappings[csv_field] = wav_field
+        
+        # Display current mappings in the preview
+        if self.field_mappings:
+            for csv_field, wav_field in self.field_mappings.items():
+                item = QListWidgetItem(f"{csv_field} → {wav_field}")
+                self.mapping_preview.addItem(item)
+        else:
+            placeholder = QListWidgetItem("No field mappings defined")
+            placeholder.setForeground(QBrush(QColor(150, 150, 150)))  # Gray text
+            self.mapping_preview.addItem(placeholder)
+            
+        # Update title with count
+            if hasattr(self.mapping_preview, 'parentWidget') and self.mapping_preview.parentWidget():
+        mappings_count = len(self.field_mappings)
+        preview_title = f"Mapping Preview ({mappings_count} mappings)"
+        self.mapping_preview.parentWidget().setTitle(preview_title)
+        
+    def auto_map_fields(self):
+        """Automatically map fields based on name similarity"""
+        if not hasattr(self, 'field_mapping_controls'):
+            return
+            
+        # Build mapping scores for all field combinations
+        best_matches = {}
+        matched_wav_fields = set()
+        
+        # First pass: find exact matches and compute similarity scores
+        for csv_field, dropdown, checkbox in self.field_mapping_controls:
+            csv_field_lower = csv_field.lower()
+            best_score = 0
+            best_match = ""
+            
+            for i in range(dropdown.count()):
+                wav_field = dropdown.itemText(i)
+                if not wav_field:
+                    continue
+                    
+                wav_field_lower = wav_field.lower()
+                score = 0
+                
+                # Exact match gets highest score
+                if csv_field_lower == wav_field_lower:
+                    score = 100
+                # Substring matches get high scores
+                elif csv_field_lower in wav_field_lower:
+                    score = 75
+                elif wav_field_lower in csv_field_lower:
+                    score = 70
+                # Word matches
+                else:
+                    # Calculate word similarity
+                    csv_words = set(csv_field_lower.split())
+                    wav_words = set(wav_field_lower.split())
+                    common_words = csv_words.intersection(wav_words)
+                    if common_words:
+                        score = 50 + 10 * len(common_words)
+                    
+                    # Character similarity
+                    char_overlap = len(set(csv_field_lower) & set(wav_field_lower))
+                    score += min(20, char_overlap * 2)
+                
+                if score > best_score:
+                    best_score = score
+                    best_match = wav_field
+            
+            # Store best match if score is high enough
+            if best_score >= 30:
+                best_matches[csv_field] = (best_match, best_score)
+        
+        # Second pass: apply mappings in order of confidence (highest scores first)
+        sorted_csv_fields = sorted(
+            best_matches.keys(),
+            key=lambda f: best_matches[f][1],
+            reverse=True
+        )
+        
+        # Apply the mappings, ensuring no WAV field is used more than once
+        for csv_field in sorted_csv_fields:
+            wav_field, score = best_matches[csv_field]
+            
+            # Skip if this WAV field is already assigned
+            if wav_field in matched_wav_fields:
+                continue
+                
+            # Find the controls for this CSV field
+            for field, dropdown, checkbox in self.field_mapping_controls:
+                if field == csv_field:
+                    dropdown.setCurrentText(wav_field)
+                    checkbox.setChecked(True)
+                    matched_wav_fields.add(wav_field)
+                    break
+        
+        # Update the preview
+        self.update_mapping_preview()
+        
+        # Show success message
+        QMessageBox.information(
+            self, 
+            "Auto-Map Complete", 
+            f"Successfully mapped {len(matched_wav_fields)} fields based on name similarity."
+        )
+    
+    def select_all_fields(self):
+        """Select all fields for mapping"""
+        if hasattr(self, 'field_mapping_controls'):
+            for _, _, checkbox in self.field_mapping_controls:
+                checkbox.setChecked(True)
+            self.update_mapping_preview()
+            
+    def select_no_fields(self):
+        """Deselect all fields for mapping"""
+        if hasattr(self, 'field_mapping_controls'):
+            for _, _, checkbox in self.field_mapping_controls:
+                checkbox.setChecked(False)
+            self.update_mapping_preview()
+
+    def create_field_mapping_page(self):
+        """Create the field mapping page for step 3."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Instruction label
+        instruction_label = QLabel("Step 3: Map CSV fields to metadata fields")
+        instruction_label.setProperty("class", "instruction-label")
+        
+        # CSV field mapping
+        mapping_container = QWidget()
+        mapping_layout = QVBoxLayout(mapping_container)
+        mapping_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Field mappings section
+        mapping_group = QGroupBox("Field Mappings")
+        mapping_group_layout = QVBoxLayout(mapping_group)
+        
+        # Create a form layout for the mappings
+        form_layout = QFormLayout()
+        form_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        
+        # Dropdown for character field
+        self.character_field_combo = QComboBox()
+        self.character_field_combo.setMinimumWidth(200)
+        form_layout.addRow("Character Field:", self.character_field_combo)
+        
+        # Dropdown for scene field
+        self.scene_field_combo = QComboBox()
+        self.scene_field_combo.setMinimumWidth(200)
+        form_layout.addRow("Scene Field:", self.scene_field_combo)
+        
+        # Dropdown for take field
+        self.take_field_combo = QComboBox()
+        self.take_field_combo.setMinimumWidth(200)
+        form_layout.addRow("Take Field:", self.take_field_combo)
+        
+        # Add the form to the mapping group
+        mapping_group_layout.addLayout(form_layout)
+        
+        # Option list for additional field mappings
+        field_mapping_label = QLabel("Additional Field Mappings:")
+        
+        self.field_mapping_list = QTableWidget(0, 2)
+        self.field_mapping_list.setHorizontalHeaderLabels(["CSV Field", "Metadata Field"])
+        self.field_mapping_list.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.field_mapping_list.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.field_mapping_list.setMinimumHeight(150)
+        
+        # Buttons for field mapping manipulation
+        field_btn_container = QWidget()
+        field_btn_layout = QHBoxLayout(field_btn_container)
+        field_btn_layout.setContentsMargins(0, 0, 0, 0)
+        
+        add_field_btn = QPushButton("Add Field")
+        add_field_btn.setProperty("class", "action-button")
+        add_field_btn.clicked.connect(self.add_field_mapping)
+        
+        remove_field_btn = QPushButton("Remove Field")
+        remove_field_btn.setProperty("class", "action-button")
+        remove_field_btn.clicked.connect(self.remove_field_mapping)
+        
+        auto_map_btn = QPushButton("Auto Map")
+        auto_map_btn.setProperty("class", "action-button primary")
+        auto_map_btn.clicked.connect(self.auto_map_fields)
+        
+        field_btn_layout.addWidget(add_field_btn)
+        field_btn_layout.addWidget(remove_field_btn)
+        field_btn_layout.addWidget(auto_map_btn)
+        
+        mapping_group_layout.addWidget(field_mapping_label)
+        mapping_group_layout.addWidget(self.field_mapping_list)
+        mapping_group_layout.addWidget(field_btn_container)
+        
+        # Preview section
+        preview_group = QGroupBox("Mapping Preview")
+        preview_layout = QVBoxLayout(preview_group)
+        
+        self.mapping_preview = QTextEdit()
+        self.mapping_preview.setReadOnly(True)
+        self.mapping_preview.setMinimumHeight(100)
+        
+        preview_layout.addWidget(self.mapping_preview)
+        
+        # Add groups to the layout
+        mapping_layout.addWidget(mapping_group)
+        mapping_layout.addWidget(preview_group)
+        
+        # Add everything to main layout
+        layout.addWidget(instruction_label)
+        layout.addWidget(mapping_container)
+        
+        return page
+    
     def add_field_mapping(self):
         """Add a new field mapping row."""
         current_row = self.field_mapping_list.rowCount()
@@ -4642,23 +5069,136 @@ class CSVMatchWizard(QDialog):
         
         # Update the preview
         self.update_mapping_preview()
+    
+    def remove_field_mapping(self):
+        """Remove selected field mapping row."""
+        selected_rows = self.field_mapping_list.selectedIndexes()
+        if not selected_rows:
+            return
+            
+        # Get unique rows (since multiple cells in same row might be selected)
+        rows = set()
+        for index in selected_rows:
+            rows.add(index.row())
+            
+        # Remove rows in reverse order to avoid index shifting
+        for row in sorted(rows, reverse=True):
+            self.field_mapping_list.removeRow(row)
+            
+        # Update the preview
+        self.update_mapping_preview()
+    
+    def auto_map_fields(self):
+        """Automatically map fields based on name similarity."""
+        # First, clear existing mappings
+        while self.field_mapping_list.rowCount() > 0:
+            self.field_mapping_list.removeRow(0)
+            
+        if not self.csv_headers:
+            return
+            
+        # Try to find character field
+        character_idx = self.find_best_match(self.csv_headers, ["character", "name", "actor", "talent"])
+        if character_idx >= 0:
+            self.character_field_combo.setCurrentIndex(character_idx)
+            
+        # Try to find scene field
+        scene_idx = self.find_best_match(self.csv_headers, ["scene", "sc", "scn"])
+        if scene_idx >= 0:
+            self.scene_field_combo.setCurrentIndex(scene_idx)
+            
+        # Try to find take field
+        take_idx = self.find_best_match(self.csv_headers, ["take", "tk", "takes"])
+        if take_idx >= 0:
+            self.take_field_combo.setCurrentIndex(take_idx)
+            
+        # Mapping of metadata fields to possible CSV header matches
+        field_matches = {
+            "Show": ["show", "program", "series", "title"],
+            "Category": ["category", "type", "kind"],
+            "Subcategory": ["subcategory", "subtype", "subkind", "episode"],
+            "Slate": ["slate", "marker", "circle", "circled"],
+            "ixmlNote": ["note", "notes", "comment", "comments", "description"],
+            "ixmlWildtrack": ["wild", "wildtrack", "ambient", "room tone"],
+            "ixmlCircled": ["circled", "circle", "good", "good take", "best"]
+        }
+        
+        # Find and add matches for additional fields
+        for meta_field, keywords in field_matches.items():
+            idx = self.find_best_match(self.csv_headers, keywords)
+            if idx >= 0:
+                # Add this mapping
+                current_row = self.field_mapping_list.rowCount()
+                self.field_mapping_list.insertRow(current_row)
+                
+                csv_combo = QComboBox()
+                csv_combo.addItems(self.csv_headers)
+                csv_combo.setCurrentIndex(idx)
+                
+                meta_combo = QComboBox()
+                meta_fields = ["Show", "Category", "Subcategory", "Slate", "ixmlNote", "ixmlWildtrack", "ixmlCircled"]
+                meta_combo.addItems(meta_fields)
+                meta_combo.setCurrentIndex(meta_fields.index(meta_field))
+                
+                self.field_mapping_list.setCellWidget(current_row, 0, csv_combo)
+                self.field_mapping_list.setCellWidget(current_row, 1, meta_combo)
+        
+        # Update the preview
+        self.update_mapping_preview()
+    
+    def find_best_match(self, headers, keywords):
+        """Find the best match from headers for any keyword."""
+        for idx, header in enumerate(headers):
+            header_lower = header.lower()
+            for keyword in keywords:
+                if keyword.lower() in header_lower:
+                    return idx
+        return -1
+        
+    def update_mapping_preview(self):
+        """Update the mapping preview with current selections."""
+        if not self.csv_headers:
+            self.mapping_preview.setText("No CSV data loaded")
+            return
+            
+        # Get the current mappings
+        preview_text = "Character Field: "
+        if self.character_field_combo.currentIndex() >= 0:
+            preview_text += self.csv_headers[self.character_field_combo.currentIndex()]
+        else:
+            preview_text += "Not selected"
+            
+        preview_text += "\nScene Field: "
+        if self.scene_field_combo.currentIndex() >= 0:
+            preview_text += self.csv_headers[self.scene_field_combo.currentIndex()]
+        else:
+            preview_text += "Not selected"
+            
+        preview_text += "\nTake Field: "
+        if self.take_field_combo.currentIndex() >= 0:
+            preview_text += self.csv_headers[self.take_field_combo.currentIndex()]
+        else:
+            preview_text += "Not selected"
+            
+        # Add additional field mappings
+        if self.field_mapping_list.rowCount() > 0:
+            preview_text += "\n\nAdditional Field Mappings:"
+            for row in range(self.field_mapping_list.rowCount()):
+                csv_combo = self.field_mapping_list.cellWidget(row, 0)
+                meta_combo = self.field_mapping_list.cellWidget(row, 1)
+                
+                if csv_combo and meta_combo:
+                    csv_field = csv_combo.currentText()
+                    meta_field = meta_combo.currentText()
+                    preview_text += f"\n- {csv_field} → {meta_field}"
+        
+        self.mapping_preview.setText(preview_text)
 
-# --- Appended Main Execution Block (for debugging GUI launch) ---
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName("Audio Metadata Editor")
-    
-    # Optional: For High DPI displays
-    # if hasattr(Qt, 'AA_EnableHighDpiScaling'):
-    #     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-    # if hasattr(Qt, 'AA_UseHighDpiPixmaps'):
-    #     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
-
     window = AudioMetadataEditor()
-    window.show()  # Ensure the window is explicitly shown
-    sys.exit(app.exec()) # Start the event loop
+    window.show()
+    sys.exit(app.exec())
 
 if __name__ == "__main__":
-    multiprocessing.freeze_support() # For PyInstaller/bundling
-    main()
-# --- End of Appended Main Execution Block ---
+    main() 
