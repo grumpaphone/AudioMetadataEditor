@@ -65,5 +65,24 @@ venv.bak/
 .AppleDouble
 .LSOverride
 
-# Audio files
-*.wav 
+# Audio files (except sample files)
+*.wav
+!PR2_Allen_Sc5.14D_01.wav
+
+# Backup and temporary files
+*.backup*
+*.bak*
+fix_*.py
+app_*.py
+!app.py
+
+# Package manager artifacts
+=*.*.*
+
+# Node.js files (not needed in Python project)
+package.json
+package-lock.json
+node_modules/
+
+# Temporary files with special characters
+.!* 
