@@ -1,0 +1,120 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Audio Metadata Editor - Complete Development Rules
+
+## CRITICAL: Python Version Requirements
+- **PRIMARY PYTHON VERSION**: Python 3.11.3
+- **ALWAYS use `python3` command** (NOT `python` which defaults to Python 2.7.18)
+- **MINIMUM VERSION**: Python 3.6+ (required for f-string support)
+- **VERIFY BEFORE CHANGES**: Run `python3 --version` to confirm correct version
+
+## Project Architecture & Key Files
+- **Main Application**: [app.py](mdc:app.py) - PyQt6-based GUI with sophisticated background agent system
+- **Metadata Core**: [wav_metadata.py](mdc:wav_metadata.py) - WAV file metadata reading/writing operations
+- **Dependencies**: [requirements.txt](mdc:requirements.txt) - PyQt6, audio processing libraries
+- **Runtime Script**: [run_app.sh](mdc:run_app.sh) - Shell script ensuring correct Python version
+- **Unit Tests**: [test_metadata.py](mdc:test_metadata.py) - Metadata functionality validation
+- **Technical Docs**: [TECHNICAL_DOCUMENTATION.md](mdc:TECHNICAL_DOCUMENTATION.md) - Complete architecture reference
+- **User Guide**: [README.md](mdc:README.md) - Installation and usage instructions
+
+## Framework & Technology Stack
+- **GUI Framework**: PyQt6 (version 6.4.0+) - NEVER use PyQt5
+  - Import from: `PyQt6.QtWidgets`, `PyQt6.QtCore`, `PyQt6.QtGui`
+  - Use `pyqtSignal` and `pyqtSlot` for signals/slots
+  - Use `QApplication.exec()` not `exec_()`
+- **Threading**: `PyQt6.QtCore.QThread` for background operations
+- **Concurrent Processing**: `concurrent.futures.ThreadPoolExecutor`
+- **Audio Libraries**: soundfile, wavinfo, numpy for audio processing
+
+## Code Standards & Best Practices
+- **String Formatting**: ALWAYS use f-strings `f"text {variable}"` (Python 3.6+ feature)
+- **Import Style**: Explicit imports preferred over wildcards
+- **Class Design**: New-style classes, inherit from appropriate base classes
+- **Error Handling**: Use specific exception types in try/except blocks
+- **Threading Communication**: Qt signals/slots for thread-to-UI communication
+- **File Paths**: Use `os.path` for cross-platform compatibility
+
+## Background Agent System (Critical Architecture)
+The [app.py](mdc:app.py) implements a sophisticated background processing system:
+
+### Core Components:
+- **BackgroundAgent**: Abstract base class (inherits from QThread)
+- **BackgroundAgentManager**: Coordinates multiple agents, handles lifecycle
+- **AutoSaveAgent**: Automatically saves pending changes every 30 seconds
+- **FileWatcherAgent**: Monitors external file system changes
+- **ValidationAgent**: Validates metadata integrity periodically
+
+### Integration Points:
+- Agents start automatically when files are loaded
+- Status updates via Qt signals to main UI
+- Graceful shutdown on application close
+- Thread-safe communication with main thread
+
+## Dependencies (requirements.txt)
+```
+PyQt6>=6.4.0
+soundfile>=0.12.1
+wavinfo>=0.1.5
+numpy>=1.22.0
+cachetools>=5.3.0
+PyQt6-Qt6>=6.4.0
+PyQt6-sip>=13.4.0
+PyQt6-QtSvg>=6.4.0
+```
+
+## Runtime Commands
+- **Run Application**: `python3 app.py` OR `./run_app.sh`
+- **Install Dependencies**: `pip3 install -r requirements.txt`
+- **Run Tests**: `python3 test_metadata.py`
+- **Check Python Version**: `python3 --version` (should show 3.11.3)
+
+## Development Environment Specifications
+- **Operating System**: macOS (darwin 24.5.0)
+- **Shell**: /bin/zsh
+- **Working Directory**: /Users/willtendy/Desktop/CODE/Metadata
+- **IDE**: Cursor with this rules file
+
+## Common Issues & Solutions
+- **"App won't run"**: Verify using `python3` instead of `python` command
+- **Import errors**: Check PyQt6 imports (not PyQt5), verify dependencies installed
+- **Syntax errors**: Ensure f-string usage (requires Python 3.6+)
+- **Threading issues**: Use Qt signals/slots for UI updates from background threads
+- **Performance issues**: Use ThreadPoolExecutor for parallel file processing
+
+## Key Architectural Patterns
+1. **Main Application**: `AudioMetadataEditor` class (inherits from QMainWindow)
+2. **Command Pattern**: Undo/Redo system using command objects
+3. **Observer Pattern**: Qt signals/slots for event handling
+4. **Thread Pool Pattern**: Background processing with ThreadPoolExecutor
+5. **Agent Pattern**: Background agents for auto-save, monitoring, validation
+
+## File Operations & Performance
+- **Large File Handling**: Use ThreadPoolExecutor for parallel processing
+- **Memory Management**: Implement proper cleanup in closeEvent
+- **UI Responsiveness**: Never block main thread with file I/O operations
+- **Progress Reporting**: Use QProgressDialog for long operations
+
+## Testing Requirements
+- **Unit Tests**: Python's built-in `unittest` module
+- **Manual GUI Testing**: Required for UI functionality
+- **File Testing**: Use sample WAV files for metadata operations
+- **Thread Testing**: Verify background agents work correctly
+
+## Before Making ANY Code Changes:
+1. **Read [TECHNICAL_DOCUMENTATION.md](mdc:TECHNICAL_DOCUMENTATION.md)**: Understand current architecture and affected components
+2. **Verify Python version**: `python3 --version` (must be 3.11.3)
+3. **Check current directory**: Should be /Users/willtendy/Desktop/CODE/Metadata
+4. **Review this rules file**: Understand framework and version requirements
+5. **Test after changes**: Always run `python3 app.py` to verify functionality
+6. **Use proper imports**: PyQt6 (not PyQt5), f-strings (not % formatting)
+7. **Update documentation**: Modify [TECHNICAL_DOCUMENTATION.md](mdc:TECHNICAL_DOCUMENTATION.md) for architectural changes
+
+## Critical Reminders:
+- **NEVER use `python` command** - always use `python3`
+- **NEVER import from PyQt5** - always use PyQt6
+- **NEVER block the main thread** - use QThread for background operations
+- **ALWAYS use f-strings** for string formatting in new code
+- **ALWAYS test with actual WAV files** when modifying metadata functionality
