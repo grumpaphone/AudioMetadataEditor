@@ -4,13 +4,21 @@ WAV Metadata Utility Module
 
 Provides functions for reading and writing BWF and iXML metadata in WAV files.
 """
-
 import os
 import struct
-import wave
 import xml.etree.ElementTree as ET
-from wavinfo import WavInfoReader
 from functools import lru_cache
+import re
+import tempfile
+import shutil
+import traceback # For debugging
+
+# Third-party imports
+from wavinfo import WavInfoReader # type: ignore
+import soundfile as sf # type: ignore
+# Unused imports based on pylint:
+# import wave
+# import numpy as np
 
 
 class WavMetadata:
@@ -91,7 +99,7 @@ class WavMetadata:
                         desc = str(bext.description).strip()
                         self._debug_print(f"  Found description: {desc}")
                         # Check if description contains scene/take info (e.g., "S01T02" format)
-                        import re
+                        # import re # Moved to top
                         # Look for scene/take patterns like "S01T02" or "SC01TK02"
                         scene_take_match = re.search(r'S(?:C|CNE)?[_\s]*(\d+)[_\s]*T(?:K|AKE)?[_\s]*(\d+)', desc, re.IGNORECASE)
                         if scene_take_match:
@@ -292,7 +300,7 @@ class WavMetadata:
             print(f"  BEXT originator reference: {orig_ref}")
             
             # Look for scene/take in description or originator reference
-            import re
+            # import re # Moved to top
             
             # Look for show information
             if not metadata["Show"]:
@@ -483,7 +491,7 @@ class WavMetadata:
                         # Check if this contains metadata
                         if list_id == b'ISBJ' or list_id == b'ICMT':
                             # Subject or comments might contain Category/Subcategory
-                            import re
+                            # import re # Moved to top
                             
                             # Look for show label
                             show_match = re.search(r'(?:SHOW|PROGRAM|SERIES)[:\s]+(\w[^,;\r\n]*)', 
@@ -587,7 +595,7 @@ def read_wav_metadata(file_path, debug=False):
         return metadata_reader.read_metadata()
     except Exception as e:
         if debug:
-            import traceback
+            # import traceback # Moved to top
             traceback.print_exc()
         # Return an empty metadata dictionary with error information
         return {
@@ -613,10 +621,10 @@ def write_wav_metadata(file_path, metadata):
     Note: This function preserves audio data but may not preserve all existing chunks.
     For a complete solution, a specialized WAV chunk manipulator would be needed.
     """
-    import soundfile as sf
-    import numpy as np
-    import tempfile
-    import shutil
+    # import soundfile as sf # Moved to top
+    # import numpy as np # Moved to top / unused
+    # import tempfile # Moved to top
+    # import shutil # Moved to top
     
     try:
         # Create a temporary file
@@ -628,14 +636,14 @@ def write_wav_metadata(file_path, metadata):
             audio_data = sound_file.read()
             sample_rate = sound_file.samplerate
             channels = sound_file.channels
-            format = sound_file.format
+            audio_format_sf = sound_file.format # Renamed from 'format'
             subtype = sound_file.subtype
         
         # Write audio data to a temporary file (this preserves the audio portion)
         with sf.SoundFile(temp_file_path, 'w', 
                          samplerate=sample_rate,
                          channels=channels,
-                         format=format,
+                         format=audio_format_sf, # Use renamed variable
                          subtype=subtype) as temp_sf:
             temp_sf.write(audio_data)
         

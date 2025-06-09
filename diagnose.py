@@ -12,7 +12,7 @@ import argparse
 import time
 import json
 from concurrent.futures import ThreadPoolExecutor
-from functools import partial
+# from functools import partial # Unused import
 import multiprocessing
 import traceback
 from wavinfo import WavInfoReader
@@ -158,17 +158,24 @@ def analyze_files(file_paths, output=None, debug=False, max_workers=None, print_
     
     # Write results to output file if specified
     if output:
-        with open(output, 'w') as f:
-            json.dump(results, f, indent=2)
+        try:
+            with open(output, 'w', encoding='utf-8') as f:
+                json.dump(results, f, indent=2)
+        except IOError as e:
+            print(f"Error writing output file {output}: {e}", file=sys.stderr)
     
     # Print summary
     total_time = time.time() - start_time
     error_count = sum(1 for r in results if r.get("errors"))
     
-    print(f"\nAnalysis complete:")
+    # Use regular string for f-string-without-interpolation warning
+    print("\nAnalysis complete:")
     print(f"- Processed {len(results)} files in {total_time:.2f} seconds")
     print(f"- Files with errors: {error_count}")
-    print(f"- Average time per file: {(total_time / len(results)) * 1000:.1f} ms")
+    if total_files > 0:
+        print(f"- Average time per file: {(total_time / total_files) * 1000:.1f} ms")
+    else:
+        print("- Average time per file: N/A (no files processed)")
     
     if output:
         print(f"- Detailed results saved to: {output}")
@@ -215,4 +222,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main()) 
+    sys.exit(main())
